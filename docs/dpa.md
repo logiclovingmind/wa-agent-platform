@@ -148,6 +148,7 @@ consent. If any clause is unenforceable, the remainder continues in force.
 | **[Cloudflare]** | Edge hosting, Workers | Encrypted traffic in transit | **[update]** | Yes |
 | **[Supabase]** | Postgres database hosting, auth, realtime, media object storage | Stored message records, conversation data, customer-sent images and voice notes | **[update]** | Yes |
 | **[GitHub]** | Nightly database backup artifacts | A full copy of the stored message records | **[update]** | Yes |
+| **[Sentry]** | Error reporting | Error messages, stack traces and job tags. Message bodies are **not** sent — see `workers/api/src/monitor.ts` | EU (Frankfurt — the DSN is an `ingest.de` host) | Yes |
 
 > Complete the bracketed provider names and locations; add or remove rows to match the
 > live platform. The LLM Provider row is mandatory — see §4.
