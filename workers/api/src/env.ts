@@ -22,6 +22,9 @@ export interface Env {
 
   CONVERSATION: DurableObjectNamespace<ConversationDO>;
 
+  /** Customer media. Meta's own URLs expire in ~5 minutes, so the bytes are copied. */
+  MEDIA: R2Bucket;
+
   /** Per-org burst cap on inbound messages. Counts per colo, so it is approximate. */
   ORG_LIMITER: RateLimit;
 

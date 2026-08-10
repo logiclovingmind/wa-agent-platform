@@ -15,7 +15,13 @@ interface Harness {
 
 /** `member` false means a valid login with no org_members row — a user of another product. */
 async function harness(
-  opts: { authorized?: boolean; member?: boolean; customer?: string; role?: "owner" | "staff" } = {},
+  opts: {
+    authorized?: boolean;
+    member?: boolean;
+    customer?: string;
+    role?: "owner" | "staff";
+    messages?: Array<Record<string, unknown>>;
+  } = {},
 ) {
   const token = await encryptUnderMasterKey("meta-token");
   const out: Harness = { rest: [], sent: [] };
@@ -42,6 +48,8 @@ async function harness(
               token_key_version: 1,
             },
           ];
+        case "messages":
+          return opts.messages ?? [];
         default:
           return [];
       }
@@ -167,6 +175,44 @@ describe("dashboard write API", () => {
   it("refuses erasure for staff", async () => {
     await harness({ role: "staff" });
     const res = await call(`/api/conversations/${CONVERSATION}/erase`, { token: "good" });
+    expect(res.status).toBe(403);
+  });
+
+  it("exports the full history past the 20-row page cap, and audits it", async () => {
+    // 25 rows: a partial export is not an access right, so the page cap must not apply.
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      wa_message_id: `wamid.X${i}`,
+      direction: "inbound",
+      body: `msg ${i}`,
+    }));
+    const h = await harness({ messages: rows });
+
+    const res = await call(`/api/conversations/${CONVERSATION}/export`, { token: "good" });
+    expect(res.status).toBe(200);
+
+    const payload = (await res.json()) as { messages: unknown[]; conversation: unknown };
+    expect(payload.messages).toHaveLength(25);
+    expect(payload.conversation).toBeTruthy();
+
+    const audit = h.rest.find((c) => c.table.startsWith("audit_log"));
+    expect((audit?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
+      action: "conversation_exported",
+      detail: { conversation_id: CONVERSATION, message_count: 25 },
+    });
+  });
+
+  it("never lets the export cross an org boundary", async () => {
+    const h = await harness({ messages: [] });
+    await call(`/api/conversations/${CONVERSATION}/export`, { token: "good" });
+
+    // service_role bypasses RLS, so the org filter has to be in the query itself.
+    const read = h.rest.find((c) => c.table.startsWith("messages") && c.method === "GET");
+    expect(read?.url.searchParams.get("org_id")).toBe(`eq.${ORG_A}`);
+  });
+
+  it("refuses export for staff", async () => {
+    await harness({ role: "staff" });
+    const res = await call(`/api/conversations/${CONVERSATION}/export`, { token: "good" });
     expect(res.status).toBe(403);
   });
 });

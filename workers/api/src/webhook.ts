@@ -79,13 +79,17 @@ function extractInbound(raw: string, account: WaAccountRoute): InboundMessage[] 
 
       for (const msg of change.value?.messages ?? []) {
         if (!msg.id || !msg.from) continue;
+        const media = msg.image ?? msg.video ?? msg.audio ?? msg.document ?? msg.sticker;
         out.push({
           orgId: account.org_id,
           waAccountId: account.id,
           customerWaId: msg.from,
           waMessageId: msg.id,
           type: msg.type ?? "unknown",
-          body: msg.text?.body ?? null,
+          // A caption is the only text a media message carries, and it is what the
+          // model gets to see — the bytes themselves never reach the prompt.
+          body: msg.text?.body ?? media?.caption ?? null,
+          mediaId: media?.id ?? null,
           sentAt: parseMetaTimestamp(msg.timestamp ?? "0").getTime(),
         });
       }
@@ -123,6 +127,12 @@ async function persistStatuses(env: Env, account: WaAccountRoute, raw: string): 
   }
 }
 
+/** Every media kind carries this shape; audio and sticker never carry a caption. */
+interface MetaMedia {
+  id?: string;
+  caption?: string;
+}
+
 interface MetaWebhook {
   entry?: Array<{
     changes?: Array<{
@@ -134,6 +144,11 @@ interface MetaWebhook {
           type?: string;
           timestamp?: string;
           text?: { body?: string };
+          image?: MetaMedia;
+          video?: MetaMedia;
+          audio?: MetaMedia;
+          document?: MetaMedia;
+          sticker?: MetaMedia;
         }>;
         statuses?: Array<{ id?: string; status?: string; timestamp?: string }>;
       };

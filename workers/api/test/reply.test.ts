@@ -22,17 +22,20 @@ interface Scenario {
   flags?: Partial<ModelFlags>;
   /** Every attempt fails, so the caller falls back. */
   llmDown?: boolean;
+  /** An approved re-engagement template on the wa_account, or none configured. */
+  template?: { name: string; lang: string };
 }
 
 interface Harness {
   rest: RestCall[];
   llm: Array<{ system: string; turns: Array<{ role: string; content: string }> }>;
   sent: string[];
+  templates: Array<{ name: string; language: string }>;
 }
 
 async function harness(name: string, scenario: Scenario = {}) {
   const token = await encryptUnderMasterKey("meta-token");
-  const out: Harness = { rest: [], llm: [], sent: [] };
+  const out: Harness = { rest: [], llm: [], sent: [], templates: [] };
 
   out.rest = stubSupabase(
     (call) => {
@@ -50,6 +53,8 @@ async function harness(name: string, scenario: Scenario = {}) {
               token_ciphertext: token.ciphertext,
               token_iv: token.iv,
               token_key_version: 1,
+              reengagement_template_name: scenario.template?.name ?? null,
+              reengagement_template_lang: scenario.template?.lang ?? null,
             },
           ];
         case "messages":
@@ -81,8 +86,19 @@ async function harness(name: string, scenario: Scenario = {}) {
       }
 
       if (url.hostname === "graph.test") {
-        const body = (await req.json()) as { text: { body: string } };
-        out.sent.push(body.text.body);
+        const body = (await req.json()) as {
+          type: string;
+          text?: { body: string };
+          template?: { name: string; language: { code: string } };
+        };
+        if (body.type === "template") {
+          out.templates.push({
+            name: body.template!.name,
+            language: body.template!.language.code,
+          });
+        } else {
+          out.sent.push(body.text!.body);
+        }
         return Response.json({ messages: [{ id: `wamid.OUT.${out.sent.length}` }] });
       }
 
@@ -234,7 +250,55 @@ describe("reply path", () => {
 
     expect(h.llm).toEqual([]);
     expect(h.sent).toEqual([]);
+    expect(h.templates).toEqual([]);
     expect(h.rest.some((c) => c.table.startsWith("usage_events"))).toBe(false);
     expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("sends the re-engagement template when the window is closed", async () => {
+    const h = await harness("reply-template", { template: { name: "reengage", lang: "en" } });
+    const stale = inbound("wamid.t1", "hello");
+    stale.sentAt = Date.now() - 25 * 60 * 60 * 1000;
+    await h.conv.onInbound(stale);
+    await flush(h.conv);
+
+    expect(h.templates).toEqual([{ name: "reengage", language: "en" }]);
+    // The template cannot carry the answer, so a human still owes this customer one.
+    expect((await h.conv.getState()).handoff).toBe("requested");
+    // No model call and no free-form send: both are illegal outside the window.
+    expect(h.llm).toEqual([]);
+    expect(h.sent).toEqual([]);
+    expect(h.rest.some((c) => c.table.startsWith("usage_events"))).toBe(false);
+  });
+
+  it("never templates a flagged conversation, even with one configured", async () => {
+    const h = await harness("reply-template-flagged", {
+      template: { name: "reengage", lang: "en" },
+    });
+    // safety.md: engagement content toward a flagged customer is exactly what must
+    // never happen, and outside the window the prefilter is the only detector there is.
+    const stale = inbound("wamid.t2", "i am in 10th standard");
+    stale.sentAt = Date.now() - 25 * 60 * 60 * 1000;
+    await h.conv.onInbound(stale);
+    await flush(h.conv);
+
+    expect(h.templates).toEqual([]);
+    expect(h.sent).toEqual([]);
+    expect(h.rest.some((c) => c.table.startsWith("safety_flags"))).toBe(true);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("templates at most once for a replayed stale burst", async () => {
+    const h = await harness("reply-template-replay", {
+      template: { name: "reengage", lang: "en" },
+    });
+    const stale = inbound("wamid.t3", "hello");
+    stale.sentAt = Date.now() - 25 * 60 * 60 * 1000;
+    await h.conv.onInbound(stale);
+    await flush(h.conv);
+
+    expect(h.templates).toHaveLength(1);
+    // Same claim that guards a normal reply: templates cost money per send.
+    expect(await h.conv.claimReply("wamid.t3")).toBe(false);
   });
 });

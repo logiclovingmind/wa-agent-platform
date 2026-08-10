@@ -22,7 +22,7 @@ import {
   type Sector,
 } from "@wa/shared";
 import type { Env } from "../env.js";
-import { sendText, type SendTarget } from "../meta.js";
+import { downloadMedia, sendTemplate, sendText, type SendTarget } from "../meta.js";
 
 /** DO alarms retry with backoff; cron does not. That is why debounce lives here. */
 export const DEBOUNCE_MS = 4_000;
@@ -41,6 +41,8 @@ export interface InboundMessage {
   waMessageId: string;
   type: string;
   body: string | null;
+  /** Graph media id, present on image/video/audio/document/sticker messages. */
+  mediaId?: string | null;
   /** Epoch ms, from Meta's own timestamp rather than our clock. */
   sentAt: number;
 }
@@ -167,10 +169,27 @@ export class ConversationDO extends DurableObject<Env> {
       if (conversation.error) throw new Error(`conversation erase failed: ${conversation.error.message}`);
     }
 
+    // Media dies in both branches. A scrubbed flagged conversation keeps the proof
+    // that we responded correctly, and an image is never part of that proof.
+    await this.#eraseMedia(orgId, conversationId);
+
     // Drop the DO's own copy so a re-message from the same customer starts clean.
     this.#sql.exec("delete from seen");
     this.#sql.exec("delete from pending");
     this.#sql.exec("delete from kv");
+  }
+
+  /** Deletes every R2 object under one conversation's prefix, 1000 keys at a time. */
+  async #eraseMedia(orgId: string, conversationId: string): Promise<void> {
+    const prefix = `media/${orgId}/${conversationId}/`;
+    let cursor: string | undefined;
+    do {
+      const listed = await this.env.MEDIA.list(cursor ? { prefix, cursor } : { prefix });
+      if (listed.objects.length > 0) {
+        await this.env.MEDIA.delete(listed.objects.map((object) => object.key));
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
   }
 
   // --- inbound ---------------------------------------------------------------
@@ -218,6 +237,7 @@ export class ConversationDO extends DurableObject<Env> {
       direction: "inbound",
       type: msg.type,
       body: msg.body,
+      media_r2_key: await this.#storeMedia(msg, conversationId),
       created_at: new Date(msg.sentAt).toISOString(),
     });
     if (error) throw new Error(`message insert failed: ${error.message}`);
@@ -225,6 +245,36 @@ export class ConversationDO extends DurableObject<Env> {
     // Second line of defence, for when this DO is evicted and loses its `seen` table.
     const dedupe = await db.insert("inbound_dedupe", { wa_message_id: msg.waMessageId });
     if (dedupe.error) throw new Error(`inbound_dedupe insert failed: ${dedupe.error.message}`);
+  }
+
+  /**
+   * Copies media to R2 and returns its key, or null. Streamed straight from Meta to
+   * R2, so the bytes never land in memory and cost I/O rather than CPU.
+   *
+   * Media failing must never cost us the message: the customer's text and the dedupe
+   * record matter more than the attachment, and this message id is already in `seen`,
+   * so a throw here would drop the turn entirely on retry.
+   */
+  async #storeMedia(msg: InboundMessage, conversationId: string): Promise<string | null> {
+    if (!msg.mediaId) return null;
+
+    try {
+      const target = await this.#sendTarget();
+      if (!target) return null;
+
+      const media = await downloadMedia(this.env, target.send, msg.mediaId);
+      if (!media) return null;
+
+      // org and conversation lead the key so erasure can drop a customer's media with
+      // one prefix list, and so no two orgs can ever collide.
+      const key = `media/${msg.orgId}/${conversationId}/${msg.waMessageId}`;
+      await this.env.MEDIA.put(key, media.body, {
+        httpMetadata: { contentType: media.contentType },
+      });
+      return key;
+    } catch {
+      return null;
+    }
   }
 
   async #conversationId(db: OrgDb, msg: InboundMessage): Promise<string> {
@@ -317,16 +367,6 @@ export class ConversationDO extends DurableObject<Env> {
     // A human holding the conversation reads the inbox; the bot stays quiet.
     if (!this.#canBotReply()) return;
 
-    // Meta rejects free-form messages outside the 24h window, and every inbound resets
-    // it, so this only fires on stale processing — a burst answered long after it was
-    // sent. Template sending does not exist yet, so nothing can legally go out: hand
-    // off instead of attempting a send Meta will reject (the #1 "why no reply?").
-    const last = batch[batch.length - 1]!;
-    if (!isWindowOpen(new Date(), windowExpiresAt(new Date(last["sent_at"] as number)))) {
-      await this.requestHandoff();
-      return;
-    }
-
     // The whole burst is answered once, and the claim is against its last id: that is
     // the id a Meta retry of the same burst would carry.
     const customerText = batch
@@ -334,6 +374,16 @@ export class ConversationDO extends DurableObject<Env> {
       .filter((body): body is string => Boolean(body))
       .join("\n");
     const anchor = batch[batch.length - 1]!["wa_message_id"] as string;
+
+    // Meta rejects free-form messages outside the 24h window, and every inbound resets
+    // it, so this only fires on stale processing — a burst answered long after it was
+    // sent. A template is the only thing that may legally go out (the #1 "why no
+    // reply?"), and it cannot carry the reply, so the handoff stands either way.
+    const last = batch[batch.length - 1]!;
+    if (!isWindowOpen(new Date(), windowExpiresAt(new Date(last["sent_at"] as number)))) {
+      await this.#reengage(anchor, customerText);
+      return;
+    }
 
     await this.#reply(anchor, customerText);
   }
@@ -410,6 +460,53 @@ export class ConversationDO extends DurableObject<Env> {
   async #sendBlocked(anchor: string): Promise<void> {
     await this.#send(anchor, BLOCKED_REPLY);
     await this.requestHandoff();
+  }
+
+  /**
+   * The 24h window is shut, so the model's answer can never be delivered. A template
+   * is the only legal send, and its text was fixed at approval time, so all it can do
+   * is invite the customer to write back — which re-opens the window.
+   *
+   * The handoff happens either way: a person still owes this customer a reply, and an
+   * unconfigured template must not turn into silence.
+   */
+  async #reengage(anchor: string, customerText: string): Promise<void> {
+    await this.requestHandoff();
+
+    // safety.md: never send engagement content toward a flagged conversation. The
+    // prefilter is the only detector available here — a flagged turn never reaches the
+    // model, and outside the window there is no model call at all.
+    const flagged = prefilter(customerText);
+    if (flagged) {
+      await this.#recordFlag(flagged);
+      return;
+    }
+
+    // Claimed like any other send: a replayed stale burst must not template twice.
+    if (!(await this.claimReply(anchor))) return;
+
+    const target = await this.#sendTarget();
+    if (!target?.template) return;
+
+    const waMessageId = await sendTemplate(
+      this.env,
+      target.send,
+      target.customerWaId,
+      target.template,
+    );
+
+    const orgId = this.#get("org_id");
+    const conversationId = this.#get("conversation_id");
+    if (!orgId || !conversationId) return;
+
+    const { error } = await createOrgDb(this.env, orgId).insert("messages", {
+      conversation_id: conversationId,
+      wa_message_id: waMessageId,
+      direction: "outbound",
+      type: "template",
+      body: `[template: ${target.template.name}]`,
+    });
+    if (error) throw new Error(`template insert failed: ${error.message}`);
   }
 
   /**
@@ -521,26 +618,38 @@ export class ConversationDO extends DurableObject<Env> {
     };
   }
 
-  async #sendTarget(): Promise<{ send: SendTarget; customerWaId: string } | null> {
+  async #sendTarget(): Promise<{
+    send: SendTarget;
+    customerWaId: string;
+    template: { name: string; language: string } | null;
+  } | null> {
     const orgId = this.#get("org_id");
     const waAccountId = this.#get("wa_account_id");
     const customerWaId = this.#get("customer_wa_id");
     if (!orgId || !waAccountId || !customerWaId) return null;
 
     const { data, error } = await createOrgDb(this.env, orgId)
-      .select("wa_accounts", "phone_number_id,token_ciphertext,token_iv,token_key_version", {
-        limit: 1,
-      })
+      .select(
+        "wa_accounts",
+        "phone_number_id,token_ciphertext,token_iv,token_key_version," +
+          "reengagement_template_name,reengagement_template_lang",
+        { limit: 1 },
+      )
       .eq("id", waAccountId)
       .maybeSingle<{
         phone_number_id: string;
         token_ciphertext: string;
         token_iv: string;
         token_key_version: number;
+        reengagement_template_name: string | null;
+        reengagement_template_lang: string | null;
       }>();
 
     if (error) throw new Error(`wa_account lookup failed: ${error.message}`);
     if (!data) return null;
+
+    const name = data.reengagement_template_name;
+    const language = data.reengagement_template_lang;
 
     return {
       send: {
@@ -550,6 +659,7 @@ export class ConversationDO extends DurableObject<Env> {
         tokenKeyVersion: data.token_key_version,
       },
       customerWaId,
+      template: name && language ? { name, language } : null,
     };
   }
 

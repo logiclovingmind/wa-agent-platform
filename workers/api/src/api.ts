@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createOrgDb } from "@wa/shared";
+import { createOrgDb, createServiceClient } from "@wa/shared";
 import { authenticate, type Caller } from "./auth.js";
 import type { Env } from "./env.js";
 
@@ -114,4 +114,54 @@ api.post("/api/conversations/:id/erase", async (c) => {
   if (error) throw new Error(`audit_log insert failed: ${error.message}`);
 
   return c.json({ erased: true });
+});
+
+/**
+ * The other half of the DPDP data-principal rights the DPA commits us to (§3.6):
+ * access, where erasure is the deletion half. Owner-gated and audited for the same
+ * reason — it emits one customer's entire conversation history in a single response.
+ *
+ * POST rather than GET because it writes the audit row, and because the CORS policy
+ * above only allows POST.
+ */
+api.post("/api/conversations/:id/export", async (c) => {
+  const caller = c.get("caller");
+  if (caller.role !== "owner") return c.json({ error: "owner only" }, 403);
+
+  const conversationId = c.req.param("id");
+  const conversation = await createOrgDb(c.env, caller.orgId)
+    .select("conversations", "id,customer_wa_id,handoff_state,created_at,last_message_at", {
+      limit: 1,
+    })
+    .eq("id", conversationId)
+    .maybeSingle<Record<string, unknown>>();
+  if (conversation.error) throw new Error(`export lookup failed: ${conversation.error.message}`);
+  if (!conversation.data) return c.json({ error: "not found" }, 404);
+
+  // Deliberately past OrgDb's 20-row cap: a partial export is not an access right.
+  // Named columns, never `select *` (invariant 7), and org-filtered in code because
+  // service_role bypasses RLS (invariant 2). Rare and owner-only, so the egress cost
+  // is bounded by how often a data principal actually asks.
+  const messages = await createServiceClient(c.env)
+    .from("messages")
+    .select("wa_message_id,direction,type,body,media_r2_key,created_at")
+    .eq("org_id", caller.orgId)
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+  if (messages.error) throw new Error(`export failed: ${messages.error.message}`);
+
+  const { error } = await createOrgDb(c.env, caller.orgId).insert("audit_log", {
+    actor_user_id: caller.userId,
+    action: "conversation_exported",
+    detail: { conversation_id: conversationId, message_count: messages.data.length },
+  });
+  if (error) throw new Error(`audit_log insert failed: ${error.message}`);
+
+  return c.json({
+    exported_at: new Date().toISOString(),
+    conversation: conversation.data,
+    // Keys, not bytes. Media is served from R2 separately so one export cannot pull
+    // gigabytes through the Worker.
+    messages: messages.data,
+  });
 });
