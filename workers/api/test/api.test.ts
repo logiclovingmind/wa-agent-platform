@@ -14,7 +14,9 @@ interface Harness {
 }
 
 /** `member` false means a valid login with no org_members row — a user of another product. */
-async function harness(opts: { authorized?: boolean; member?: boolean; customer?: string } = {}) {
+async function harness(
+  opts: { authorized?: boolean; member?: boolean; customer?: string; role?: "owner" | "staff" } = {},
+) {
   const token = await encryptUnderMasterKey("meta-token");
   const out: Harness = { rest: [], sent: [] };
 
@@ -22,7 +24,7 @@ async function harness(opts: { authorized?: boolean; member?: boolean; customer?
     (call) => {
       switch (call.table.split("?")[0]) {
         case "org_members":
-          return opts.member === false ? [] : [{ org_id: ORG_A, role: "owner" }];
+          return opts.member === false ? [] : [{ org_id: ORG_A, role: opts.role ?? "owner" }];
         case "conversations":
           return [
             {
@@ -149,5 +151,22 @@ describe("dashboard write API", () => {
 
     expect(res.status).toBe(400);
     expect(h.sent).toEqual([]);
+  });
+
+  it("lets the owner erase a conversation and audits it", async () => {
+    const h = await harness();
+    const res = await call(`/api/conversations/${CONVERSATION}/erase`, { token: "good" });
+
+    expect(res.status).toBe(200);
+    const audit = h.rest.find((c) => c.table.startsWith("audit_log"));
+    expect(audit?.method).toBe("POST");
+    const auditRow = (audit?.body as Array<Record<string, unknown>>)[0];
+    expect(auditRow).toMatchObject({ action: "conversation_erased" });
+  });
+
+  it("refuses erasure for staff", async () => {
+    await harness({ role: "staff" });
+    const res = await call(`/api/conversations/${CONVERSATION}/erase`, { token: "good" });
+    expect(res.status).toBe(403);
   });
 });

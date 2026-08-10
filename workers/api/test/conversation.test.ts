@@ -111,3 +111,47 @@ describe("outbound idempotency", () => {
     expect(await conv.claimReply("wamid.c2")).toBe(true);
   });
 });
+
+describe("erase", () => {
+  const CONV = "33333333-3333-3333-3333-333333333333";
+  const ACC = "22222222-2222-2222-2222-222222222222";
+  const CUST = "919876543210";
+
+  async function erased(name: string) {
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
+    await conv.attach({ orgId: ORG, waAccountId: ACC, customerWaId: CUST, conversationId: CONV });
+    return conv;
+  }
+
+  it("erases an unflagged conversation completely", async () => {
+    const calls = stubSupabase((call) =>
+      call.table === "conversations" ? [{ id: CONV }] : [],
+    );
+    const conv = await erased("erase-unflagged");
+    await conv.erase();
+
+    const delTables = calls.filter((c) => c.method === "DELETE").map((c) => c.table);
+    expect(delTables).toEqual(expect.arrayContaining(["usage_events", "messages", "conversations"]));
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("keeps the safety proof when erasing a flagged conversation", async () => {
+    const calls = stubSupabase((call) => {
+      if (call.table === "conversations") return [{ id: CONV }];
+      if (call.table === "safety_flags") return [{ id: "sf-1" }];
+      if (call.table === "messages" && call.method === "GET") return [{ wa_message_id: "wamid.f1" }];
+      return [];
+    });
+    const conv = await erased("erase-flagged");
+    await conv.erase();
+
+    // Content is scrubbed, not deleted.
+    const scrub = calls.find((c) => c.method === "PATCH");
+    expect(scrub?.table).toBe("messages");
+    expect(scrub?.body).toEqual({ body: null, media_r2_key: null });
+    expect(calls.some((c) => c.method === "DELETE" && c.table === "conversations")).toBe(false);
+    // The customer's dedupe identifiers still go.
+    const dedupe = calls.find((c) => c.method === "DELETE" && c.table === "inbound_dedupe");
+    expect(dedupe?.url.searchParams.get("wa_message_id")).toContain("wamid.f1");
+  });
+});

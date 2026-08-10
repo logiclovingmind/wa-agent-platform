@@ -95,3 +95,23 @@ api.post("/api/conversations/:id/reply", async (c) => {
   }
   return c.json(await stub.getState());
 });
+
+// Erasure is irreversible and is a DPDP data-principal right, so only the owner may
+// trigger it, and it is audited. The DO decides what to keep (flagged conversations
+// keep their safety proof).
+api.post("/api/conversations/:id/erase", async (c) => {
+  if (c.get("caller").role !== "owner") return c.json({ error: "owner only" }, 403);
+
+  const stub = await conversationStub(c);
+  if (!stub) return c.json({ error: "not found" }, 404);
+
+  await stub.erase();
+  const { error } = await createOrgDb(c.env, c.get("caller").orgId).insert("audit_log", {
+    actor_user_id: c.get("caller").userId,
+    action: "conversation_erased",
+    detail: { conversation_id: c.req.param("id") },
+  });
+  if (error) throw new Error(`audit_log insert failed: ${error.message}`);
+
+  return c.json({ erased: true });
+});

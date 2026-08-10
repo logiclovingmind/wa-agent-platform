@@ -7,6 +7,7 @@ import {
   complete,
   costMicros,
   createOrgDb,
+  createServiceClient,
   FALLBACK_REPLY,
   flagFromModel,
   HISTORY_LIMIT,
@@ -114,6 +115,62 @@ export class ConversationDO extends DurableObject<Env> {
     this.#set("wa_account_id", identity.waAccountId);
     this.#set("customer_wa_id", identity.customerWaId);
     this.#set("conversation_id", identity.conversationId);
+  }
+
+  /**
+   * Erases one customer's data (DPDP §12). Owner-gated in the API route.
+   *
+   * A conversation that was flagged keeps its proof — safety.md: "delete the payload,
+   * keep the proof." Its content is scrubbed but the rows, wa_message_ids, timestamps,
+   * safety_flags and the conversation row survive, because safety_flags FK-cascades on
+   * conversation delete. Everything else is deleted outright.
+   */
+  async erase(): Promise<void> {
+    const orgId = this.#get("org_id");
+    const conversationId = this.#get("conversation_id");
+    if (!orgId || !conversationId) throw new Error("erase called before attach");
+
+    const db = createOrgDb(this.env, orgId);
+
+    // Full list, not OrgDb's 20-row cap: inbound_dedupe is keyed by wa_message_id, so
+    // every id must be read before its rows go. Org-filtered in code, like every
+    // createServiceClient call.
+    const { data: rows, error: idsError } = await createServiceClient(this.env)
+      .from("messages")
+      .select("wa_message_id")
+      .eq("org_id", orgId)
+      .eq("conversation_id", conversationId);
+    if (idsError) throw new Error(`message id lookup failed: ${idsError.message}`);
+    const waIds = (rows ?? []).map((row) => row.wa_message_id as string);
+
+    const flagged = await db.select("safety_flags", "id").eq("conversation_id", conversationId);
+    if (flagged.error) throw new Error(`safety_flags lookup failed: ${flagged.error.message}`);
+    const hasFlags = (flagged.data?.length ?? 0) > 0;
+
+    const usage = await db.delete("usage_events").eq("conversation_id", conversationId);
+    if (usage.error) throw new Error(`usage_events erase failed: ${usage.error.message}`);
+
+    if (waIds.length > 0) {
+      const dedupe = await db.delete("inbound_dedupe").in("wa_message_id", waIds);
+      if (dedupe.error) throw new Error(`inbound_dedupe erase failed: ${dedupe.error.message}`);
+    }
+
+    if (hasFlags) {
+      const scrub = await db
+        .update("messages", { body: null, media_r2_key: null })
+        .eq("conversation_id", conversationId);
+      if (scrub.error) throw new Error(`flagged content erase failed: ${scrub.error.message}`);
+    } else {
+      const messages = await db.delete("messages").eq("conversation_id", conversationId);
+      if (messages.error) throw new Error(`messages erase failed: ${messages.error.message}`);
+      const conversation = await db.delete("conversations").eq("id", conversationId);
+      if (conversation.error) throw new Error(`conversation erase failed: ${conversation.error.message}`);
+    }
+
+    // Drop the DO's own copy so a re-message from the same customer starts clean.
+    this.#sql.exec("delete from seen");
+    this.#sql.exec("delete from pending");
+    this.#sql.exec("delete from kv");
   }
 
   // --- inbound ---------------------------------------------------------------
