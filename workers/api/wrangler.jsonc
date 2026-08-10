@@ -39,8 +39,14 @@
     "SUPABASE_URL": "https://gtouimwbjfuzgotdqqan.supabase.co",
     "DASHBOARD_ORIGIN": "http://localhost:5173",
     "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
-    "LLM_BASE_URL": "https://api.openai.com/v1",
-    "LLM_MODEL": "gpt-4o-mini"
+    // An aggregator, not OpenAI directly — it bills in INR and takes no card, which is
+    // the whole reason it is here. OpenAI-compatible: /chat/completions and
+    // response_format json_object both verified against it.
+    "LLM_BASE_URL": "https://aicredits.in/v1",
+    // The `openai/` prefix is not cosmetic: the bare `gpt-4o-mini` alias on this
+    // provider advertises only 8k context, this one 128k, and history plus KB will
+    // outgrow 8k.
+    "LLM_MODEL": "openai/gpt-4o-mini"
   }
 
   // Secrets, set with `wrangler secret put` — never in this file:

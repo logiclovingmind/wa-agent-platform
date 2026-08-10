@@ -144,7 +144,8 @@ consent. If any clause is unenforceable, the remainder continues in force.
 
 | Provider | Service | Data processed | Location | Cross-border |
 |---|---|---|---|---|
-| **[LLM Provider, currently OpenAI (gpt-4o-mini)]** | Message inference / reply generation | WhatsApp message text | **[US — update to the provider's hosting region]** | **Yes — message content leaves India on every call** |
+| **aicredits.in** | LLM reseller / API gateway. Every prompt passes through it in plaintext, so it is a processor in its own right, not a payment channel | WhatsApp message text and the client's KB | **[update — verify where this operator is established and hosted]** | **Yes** |
+| **OpenAI (`openai/gpt-4o-mini`)** | Message inference / reply generation, reached *via* aicredits.in | WhatsApp message text | **[US]** | **Yes — message content leaves India on every call** |
 | **[Cloudflare]** | Edge hosting, Workers | Encrypted traffic in transit | **[update]** | Yes |
 | **[Supabase]** | Postgres database hosting, auth, realtime, media object storage | Stored message records, conversation data, customer-sent images and voice notes | **[update]** | Yes |
 | **[GitHub]** | Nightly database backup artifacts | A full copy of the stored message records | **[update]** | Yes |

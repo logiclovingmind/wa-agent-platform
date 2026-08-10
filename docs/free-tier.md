@@ -34,6 +34,10 @@ before Monday.
   to do slow work.
 - **A failed cron does not retry.** Nothing happens until the next fire — a nightly job
   can fail silently for weeks.
+- ⚠️ **Cloudflare's day-of-week is 1-7, not 0-6.** `0` is rejected at deploy time with
+  "invalid cron string", so Sunday is `7`. healthchecks.io uses the ordinary `0`, so the
+  same weekly job is `0 22 * * 7` in `wrangler.jsonc` and `0 22 * * 0` on the monitor.
+  They look inconsistent and are not.
 
 Budget (3 used, 2 spare):
 
