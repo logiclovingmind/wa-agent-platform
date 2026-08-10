@@ -34,7 +34,7 @@
   },
 
   "vars": {
-    "SUPABASE_URL": "http://127.0.0.1:54321",
+    "SUPABASE_URL": "https://gtouimwbjfuzgotdqqan.supabase.co",
     "DASHBOARD_ORIGIN": "http://localhost:5173",
     "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
     "LLM_BASE_URL": "https://api.openai.com/v1",
