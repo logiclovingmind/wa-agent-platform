@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wa-agent-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-01",
+  "observability": { "enabled": true },
+
+  "durable_objects": {
+    "bindings": [{ "name": "CONVERSATION", "class_name": "ConversationDO" }]
+  },
+
+  // SQLite backend, not the classic key-value one. Required on the free tier.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ConversationDO"] }],
+
+  // Keyed by org_id, so one client's runaway integration cannot burn the shared
+  // free-tier quota. A burst cap only — `period` accepts 10 or 60 and nothing else,
+  // so the daily ceiling is the usage-check cron's job, not this one's.
+  "ratelimits": [
+    { "name": "ORG_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ],
+
+  // UTC, IST is +5:30. Every expression here needs a matching entry in cron.ts.
+  // 5 triggers per *account*, not per Worker: 3 used.
+  "triggers": {
+    "crons": [
+      "0 20 * * *", // 01:30 IST — usage check + heartbeat
+      "0 21 * * *", // 02:30 IST — retention delete + flagged-content scrub
+      "0 22 * * 0" //  03:30 IST Mon — inbound_dedupe sweep
+    ]
+  },
+
+  "vars": {
+    "SUPABASE_URL": "http://127.0.0.1:54321",
+    "DASHBOARD_ORIGIN": "http://localhost:5173",
+    "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
+    "LLM_BASE_URL": "https://api.openai.com/v1",
+    "LLM_MODEL": "gpt-4o-mini"
+  }
+
+  // Secrets, set with `wrangler secret put` — never in this file:
+  //   SUPABASE_SERVICE_ROLE_KEY
+  //   SUPABASE_ANON_KEY        public key; a secret only so it is not in git
+  //   META_VERIFY_TOKEN        one global token; the per-client secret is the slug
+  //   LLM_API_KEY
+  //   MASTER_KEY_V1            base64 32 bytes, AES-GCM. Rotation adds _V2, and
+  //                            wa_accounts.*_key_version says which row uses which.
+  //   SENTRY_DSN               unset turns error reporting off rather than failing
+  //   HEALTHCHECK_BASE         https://hc-ping.com/<ping-key>; jobs append their slug,
+  //                            so a new job never needs a new secret
+}

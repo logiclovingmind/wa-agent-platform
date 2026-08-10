@@ -1,0 +1,111 @@
+# Free Supabase has no backups at all. This job is the only thing between us and total
+# data loss, which is why it fails loudly rather than skipping a bad dump.
+#
+# It is NOT a Cloudflare cron: a Worker is a JS sandbox with no filesystem and cannot
+# execute pg_dump, and 10ms of CPU would not serialise a database anyway.
+# See docs/backups.md.
+name: nightly backup
+
+on:
+  schedule:
+    - cron: "30 19 * * *" # 01:00 IST, ahead of the Worker's 01:30 usage check
+  # GitHub disables scheduled workflows after ~60 days of repo inactivity and runs them
+  # best-effort under load. This is the manual escape hatch — press it if the repo goes
+  # quiet, and treat a missed healthcheck as real.
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # pg_dump aborts on a server-version mismatch, so this tracks the Supabase
+      # Postgres major and is not "whatever the runner ships".
+      PG_MAJOR: "17"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # Recent AWS CLI v2 sends checksums that S3-compatible endpoints reject. Without
+      # this, uploads fail with a checksum error against R2.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+    steps:
+      - name: Install pinned postgresql-client
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          echo "/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_PATH"
+
+      - name: Dump
+        env:
+          # MUST be the Session pooler string. The direct db.<ref>.supabase.co host is
+          # IPv6-only and GitHub runners have no outbound IPv6 ("network is
+          # unreachable"). The *transaction* pooler does not do the prepared statements
+          # pg_dump needs — session, not transaction.
+          # URL-encode the password; a bare "@" silently breaks the URI.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          FILE="wa-agent-$(date -u +%Y%m%dT%H%M%SZ).dump"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+          # Our two schemas, and no more. Supabase owns auth/storage/extensions and a
+          # new project recreates them; including them makes the dump un-restorable.
+          #
+          # `app` is not optional. Every RLS policy calls app.is_member() /
+          # app.is_owner(), so a public-only dump restores the tables and then drops 14
+          # of 15 policies on the floor — RLS enabled with nothing to enforce it.
+          #
+          # Consequence: dashboard logins are NOT in this backup. See docs/backups.md.
+          pg_dump \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            --schema=public \
+            --schema=app \
+            --file="$FILE" \
+            "$SUPABASE_DB_URL"
+
+      - name: Check the dump is not empty
+        run: |
+          set -euo pipefail
+          SIZE=$(stat -c%s "$FILE")
+          echo "$FILE is $SIZE bytes"
+          # A dump that lost its connection mid-stream still exits 0 sometimes. A real
+          # schema is never this small, and uploading a truncated file over a good one
+          # is worse than failing.
+          [ "$SIZE" -gt 20000 ] || { echo "dump suspiciously small"; exit 1; }
+          pg_restore --list "$FILE" > /dev/null
+
+      - name: Upload to R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          KEY="postgres/$(date -u +%Y/%m)/$FILE"
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 cp "$FILE" "s3://${R2_BUCKET}/${KEY}" --endpoint-url "$ENDPOINT"
+          # Confirm it actually landed rather than trusting the exit code.
+          aws s3 ls "s3://${R2_BUCKET}/${KEY}" --endpoint-url "$ENDPOINT" | grep -q .
+
+      - name: Ping the dead-man's-switch
+        # The only external observer we have. healthchecks.io emails when a ping does
+        # not arrive, which is the case a failed job cannot report on its own.
+        if: always()
+        env:
+          HEALTHCHECK_BASE: ${{ secrets.HEALTHCHECK_BASE }}
+        run: |
+          [ -n "${HEALTHCHECK_BASE:-}" ] || exit 0
+          SUFFIX=""
+          [ "${{ job.status }}" = "success" ] || SUFFIX="/fail"
+          curl -fsS -m 10 --retry 3 -X POST "${HEALTHCHECK_BASE}/backup${SUFFIX}?create=1" || true

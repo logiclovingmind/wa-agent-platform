@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.pgdata/
+.wrangler/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,0 +1,33 @@
+{
+  "name": "wa-agent-platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:db": "vitest run --project db",
+    "dev:dashboard": "pnpm --filter @wa/dashboard dev",
+    "deploy:dashboard": "pnpm --filter @wa/dashboard build && wrangler pages deploy dashboard/dist",
+    "typecheck": "tsc -b --pretty && tsc -p workers/api --pretty && tsc -p dashboard --pretty",
+    "types:worker": "pnpm --filter @wa/api exec wrangler types",
+    "db:up": "tsx scripts/db.ts up",
+    "db:down": "tsx scripts/db.ts down",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:reset": "tsx scripts/db.ts nuke && pnpm db:up && pnpm db:migrate",
+    "db:push": "tsx scripts/migrate.ts --remote",
+    "db:restore-test": "tsx scripts/restore-test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.3",
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.11.10",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.10"
+  }
+}
