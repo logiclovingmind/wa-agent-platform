@@ -29,7 +29,9 @@
     "crons": [
       "0 20 * * *", // 01:30 IST — usage check + heartbeat
       "0 21 * * *", // 02:30 IST — retention delete + flagged-content scrub
-      "0 22 * * 0" //  03:30 IST Mon — inbound_dedupe sweep
+      // Day-of-week is 1-7 here, NOT 0-6: Cloudflare rejects "0" outright with
+      // "invalid cron string", so Sunday is 7. Sunday 22:00 UTC = 03:30 IST Monday.
+      "0 22 * * 7" //  03:30 IST Mon — inbound_dedupe sweep
     ]
   },
 

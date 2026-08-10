@@ -176,5 +176,5 @@ async function retentionDelete(env: Env): Promise<void> {
 const JOBS: Record<string, { slug: string; run: (env: Env) => Promise<void> }> = {
   "0 20 * * *": { slug: "usage-check", run: usageCheck },
   "0 21 * * *": { slug: "retention-delete", run: retentionDelete },
-  "0 22 * * 0": { slug: "dedupe-sweep", run: sweepDedupe },
+  "0 22 * * 7": { slug: "dedupe-sweep", run: sweepDedupe },
 };

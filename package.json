@@ -9,9 +9,9 @@
   "scripts": {
     "test": "vitest run",
     "test:db": "vitest run --project db",
-    "dev": "pnpm --filter @wa/api dev",
-    "deploy:api": "pnpm --filter @wa/api deploy",
-    "dev:dashboard": "pnpm --filter @wa/dashboard dev",
+    "dev": "pnpm --filter @wa/api run dev",
+    "deploy:api": "pnpm --filter @wa/api run deploy",
+    "dev:dashboard": "pnpm --filter @wa/dashboard run dev",
     "deploy:dashboard": "pnpm --filter @wa/dashboard build && wrangler pages deploy dashboard/dist",
     "typecheck": "tsc -b --pretty && tsc -p workers/api --pretty && tsc -p dashboard --pretty",
     "types:worker": "pnpm --filter @wa/api exec wrangler types",

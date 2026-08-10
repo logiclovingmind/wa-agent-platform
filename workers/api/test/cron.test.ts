@@ -27,7 +27,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("scheduled", () => {
   it("sweeps inbound_dedupe on the weekly trigger", async () => {
     const calls = stub();
-    await fire("0 22 * * 0");
+    await fire("0 22 * * 7");
 
     const del = calls.find((c) => c.method === "DELETE");
     expect(del?.table).toBe("inbound_dedupe");

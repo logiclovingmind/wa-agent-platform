@@ -74,7 +74,11 @@ Free Supabase has **no backups at all.** This job is the only thing between us a
 total data loss. Build it before client 1 and **test a restore** — an untested dump is
 a folder of files, not a backup.
 
-Restore last verified: **2026-08-10**, against a local PG17 dump — round trip green,
-15/15 policies restored. ⚠️ Still to do against a **real Supabase dump** once the
-project exists: that is what exercises the session-pooler and client-version legs
-above, neither of which a local dump touches.
+Restore last verified: **2026-08-11**, against a **real Supabase dump** pulled from the
+GitHub artifact of a `workflow_dispatch` run — round trip green, 15/15 policies and
+3/3 `app` helpers restored, seeded org/account/conversation/message all survived. The
+session-pooler and client-version legs above are therefore exercised, not assumed.
+
+`pg_restore` reports one ignored error on every run — `schema "public" already exists`.
+That one is expected and harmless; the local shim creates `public` first. It is also
+why the exit code proves nothing and `db:restore-test` counts rows instead.
