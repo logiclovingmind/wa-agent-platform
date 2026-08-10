@@ -106,7 +106,8 @@ create table messages (
   wa_message_id text not null unique,
   direction message_direction not null,
   body text,
-  media_r2_key text,
+  -- Path in the private Supabase Storage "media" bucket, never the bytes themselves.
+  media_key text,
   created_at timestamptz not null default now(),
   unique (id, org_id),
   foreign key (conversation_id, org_id) references conversations (id, org_id) on delete cascade

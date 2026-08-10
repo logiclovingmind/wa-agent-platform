@@ -43,9 +43,14 @@ provider. Two unknowns, one deadline.
 
 ## Media in v1
 
-Accept images and voice notes; do not attempt to answer them. Save to R2, reply
+Accept images and voice notes; do not attempt to answer them. Save to the private
+Supabase Storage `media` bucket (`packages/shared/src/storage.ts`), reply
 honestly ("Thanks — I've passed this to the team, someone will get back to you
 shortly"), flag for handoff. Vision and Whisper transcription are post-demo.
+
+⚠️ The `media` bucket must be created in the Supabase dashboard and must be
+**private**. A public bucket makes every customer's attachment world-readable to
+anyone who can guess a path, and the paths are org/conversation/message ids.
 
 ## Deployment note
 

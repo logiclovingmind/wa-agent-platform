@@ -26,13 +26,6 @@ jobs:
       # pg_dump aborts on a server-version mismatch, so this tracks the Supabase
       # Postgres major and is not "whatever the runner ships".
       PG_MAJOR: "17"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      # Recent AWS CLI v2 sends checksums that S3-compatible endpoints reject. Without
-      # this, uploads fail with a checksum error against R2.
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
 
     steps:
       - name: Install pinned postgresql-client
@@ -86,17 +79,22 @@ jobs:
           [ "$SIZE" -gt 20000 ] || { echo "dump suspiciously small"; exit 1; }
           pg_restore --list "$FILE" > /dev/null
 
-      - name: Upload to R2
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          set -euo pipefail
-          KEY="postgres/$(date -u +%Y/%m)/$FILE"
-          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          aws s3 cp "$FILE" "s3://${R2_BUCKET}/${KEY}" --endpoint-url "$ENDPOINT"
-          # Confirm it actually landed rather than trusting the exit code.
-          aws s3 ls "s3://${R2_BUCKET}/${KEY}" --endpoint-url "$ENDPOINT" | grep -q .
+      # Object storage would be the right home for this, but R2 and S3 both want a
+      # payment method on file and this account has none. Artifacts are the one
+      # durable store a free GitHub plan gives you. Two consequences, both real:
+      # retention is capped (90 days on free, set explicitly below so it is never a
+      # surprise), and free-plan artifact storage is small — so this WILL need a real
+      # bucket before the client's data volume grows. See docs/backups.md.
+      - name: Upload the dump as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FILE }}
+          path: ${{ env.FILE }}
+          retention-days: 90
+          # A silently-empty artifact would look like a healthy backup.
+          if-no-files-found: error
+          # Already a compressed custom-format dump; recompressing wastes runner time.
+          compression-level: 0
 
       - name: Ping the dead-man's-switch
         # The only external observer we have. healthchecks.io emails when a ping does

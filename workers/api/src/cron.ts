@@ -1,4 +1,4 @@
-import { createServiceClient } from "@wa/shared";
+import { createServiceClient, removeMedia } from "@wa/shared";
 import type { Env } from "./env.js";
 import { ping, report } from "./monitor.js";
 
@@ -27,9 +27,6 @@ const ROW_BUDGET = 400_000;
 /** safety.md: delete message content within 24h of a flag; hard-delete rows at 12 months. */
 const SCRUB_AFTER_HOURS = 24;
 const RETENTION_MONTHS = 12;
-
-/** R2 accepts at most 1000 keys per delete call. */
-const R2_DELETE_BATCH = 1000;
 
 export async function scheduled(
   controller: ScheduledController,
@@ -125,31 +122,23 @@ async function scrubFlaggedContent(env: Env): Promise<void> {
   const ids = flagged.data.map((row) => row.conversation_id);
   if (ids.length === 0) return;
 
+  // Objects go before the rows that name them. The other order loses the paths on a
+  // failure and leaves customer media stored with nothing left pointing at it —
+  // undeletable in practice, and exactly what retention exists to prevent.
   const keys = await sb
     .from("messages")
-    .select("media_r2_key")
+    .select("media_key")
     .in("conversation_id", ids)
-    .not("media_r2_key", "is", null);
+    .not("media_key", "is", null);
   if (keys.error) throw new Error(`flagged media lookup failed: ${keys.error.message}`);
-  await deleteMediaObjects(env, keys.data.map((row) => row.media_r2_key as string));
+  await removeMedia(env, keys.data.map((row) => row.media_key as string));
 
   const { error } = await sb
     .from("messages")
-    .update({ body: null, media_r2_key: null })
+    .update({ body: null, media_key: null })
     .in("conversation_id", ids)
-    .or("body.not.is.null,media_r2_key.not.is.null");
+    .or("body.not.is.null,media_key.not.is.null");
   if (error) throw new Error(`flagged content scrub failed: ${error.message}`);
-}
-
-/**
- * R2 objects go before the rows that name them. The other order loses the keys on a
- * failure and leaves customer media in the bucket with nothing left pointing at it —
- * undeletable in practice, and exactly what retention exists to prevent.
- */
-async function deleteMediaObjects(env: Env, keys: string[]): Promise<void> {
-  for (let i = 0; i < keys.length; i += R2_DELETE_BATCH) {
-    await env.MEDIA.delete(keys.slice(i, i + R2_DELETE_BATCH));
-  }
 }
 
 /**
@@ -162,13 +151,14 @@ async function deleteExpired(env: Env): Promise<void> {
   cutoff.setUTCMonth(cutoff.getUTCMonth() - RETENTION_MONTHS);
   const sb = createServiceClient(env);
 
+  // Objects first, then the rows — same reason as the scrub above.
   const keys = await sb
     .from("messages")
-    .select("media_r2_key")
+    .select("media_key")
     .lt("created_at", cutoff.toISOString())
-    .not("media_r2_key", "is", null);
+    .not("media_key", "is", null);
   if (keys.error) throw new Error(`expired media lookup failed: ${keys.error.message}`);
-  await deleteMediaObjects(env, keys.data.map((row) => row.media_r2_key as string));
+  await removeMedia(env, keys.data.map((row) => row.media_key as string));
 
   const { error } = await sb
     .from("messages")

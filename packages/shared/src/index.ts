@@ -25,6 +25,9 @@ export type { ChatMessage, PromptInput, PromptTurn } from "./prompt.js";
 export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, costMicros } from "./llm.js";
 export type { LlmEnv, Completion } from "./llm.js";
 
+export { MEDIA_BUCKET, mediaPath, putMedia, removeMedia, listMedia } from "./storage.js";
+export type { StorageEnv } from "./storage.js";
+
 export {
   WINDOW_MS,
   IST_TIME_ZONE,

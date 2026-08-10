@@ -12,7 +12,11 @@ import {
   flagFromModel,
   HISTORY_LIMIT,
   isWindowOpen,
+  listMedia,
+  mediaPath,
   prefilter,
+  putMedia,
+  removeMedia,
   SAFE_REPLY,
   windowExpiresAt,
   type Completion,
@@ -159,7 +163,7 @@ export class ConversationDO extends DurableObject<Env> {
 
     if (hasFlags) {
       const scrub = await db
-        .update("messages", { body: null, media_r2_key: null })
+        .update("messages", { body: null, media_key: null })
         .eq("conversation_id", conversationId);
       if (scrub.error) throw new Error(`flagged content erase failed: ${scrub.error.message}`);
     } else {
@@ -179,17 +183,9 @@ export class ConversationDO extends DurableObject<Env> {
     this.#sql.exec("delete from kv");
   }
 
-  /** Deletes every R2 object under one conversation's prefix, 1000 keys at a time. */
+  /** Deletes every stored object under one conversation's prefix. */
   async #eraseMedia(orgId: string, conversationId: string): Promise<void> {
-    const prefix = `media/${orgId}/${conversationId}/`;
-    let cursor: string | undefined;
-    do {
-      const listed = await this.env.MEDIA.list(cursor ? { prefix, cursor } : { prefix });
-      if (listed.objects.length > 0) {
-        await this.env.MEDIA.delete(listed.objects.map((object) => object.key));
-      }
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor);
+    await removeMedia(this.env, await listMedia(this.env, `${orgId}/${conversationId}`));
   }
 
   // --- inbound ---------------------------------------------------------------
@@ -237,7 +233,7 @@ export class ConversationDO extends DurableObject<Env> {
       direction: "inbound",
       type: msg.type,
       body: msg.body,
-      media_r2_key: await this.#storeMedia(msg, conversationId),
+      media_key: await this.#storeMedia(msg, conversationId),
       created_at: new Date(msg.sentAt).toISOString(),
     });
     if (error) throw new Error(`message insert failed: ${error.message}`);
@@ -248,8 +244,8 @@ export class ConversationDO extends DurableObject<Env> {
   }
 
   /**
-   * Copies media to R2 and returns its key, or null. Streamed straight from Meta to
-   * R2, so the bytes never land in memory and cost I/O rather than CPU.
+   * Copies media to Storage and returns its path, or null. Streamed straight from Meta,
+   * so the bytes never land in memory and cost I/O rather than CPU.
    *
    * Media failing must never cost us the message: the customer's text and the dedupe
    * record matter more than the attachment, and this message id is already in `seen`,
@@ -265,13 +261,8 @@ export class ConversationDO extends DurableObject<Env> {
       const media = await downloadMedia(this.env, target.send, msg.mediaId);
       if (!media) return null;
 
-      // org and conversation lead the key so erasure can drop a customer's media with
-      // one prefix list, and so no two orgs can ever collide.
-      const key = `media/${msg.orgId}/${conversationId}/${msg.waMessageId}`;
-      await this.env.MEDIA.put(key, media.body, {
-        httpMetadata: { contentType: media.contentType },
-      });
-      return key;
+      const path = mediaPath(msg.orgId, conversationId, msg.waMessageId);
+      return await putMedia(this.env, path, media.body, media.contentType);
     } catch {
       return null;
     }

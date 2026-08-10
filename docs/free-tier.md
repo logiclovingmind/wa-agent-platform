@@ -10,7 +10,7 @@
 | **Supabase egress** | **5GB/mo** | **402 on everything — all clients dead at once** |
 | Supabase Realtime | concurrent connections + monthly messages | One leaked subscription per open tab burns this |
 | Supabase project | pauses after ~7 days inactivity | Bites in the pre-client gap, not production |
-| R2 | storage + Class A/B ops | Media writes are Class A; thumbnails multiply them |
+| **Supabase Storage** | **1GB, and reads come out of the same 5GB egress** | Media shares the budget the dashboard is already spending. R2 is the right home and is not usable — enabling it needs a payment method this account does not have |
 | Cloudflare Pages | build minutes | Only matters if CI rebuilds on every push |
 | GitHub Actions | free minutes on private repos | The backup job is small but not free forever |
 | Subrequests | 50/request | Each `fetch` counts; a fan-out loop hits this fast |

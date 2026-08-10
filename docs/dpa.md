@@ -145,8 +145,9 @@ consent. If any clause is unenforceable, the remainder continues in force.
 | Provider | Service | Data processed | Location | Cross-border |
 |---|---|---|---|---|
 | **[LLM Provider, currently OpenAI (gpt-4o-mini)]** | Message inference / reply generation | WhatsApp message text | **[US — update to the provider's hosting region]** | **Yes — message content leaves India on every call** |
-| **[Cloudflare]** | Edge hosting, Workers, media storage (R2) | Encrypted traffic, stored media | **[update]** | Yes |
-| **[Supabase]** | Postgres database hosting, auth, realtime | Stored message records, conversation data | **[update]** | Yes |
+| **[Cloudflare]** | Edge hosting, Workers | Encrypted traffic in transit | **[update]** | Yes |
+| **[Supabase]** | Postgres database hosting, auth, realtime, media object storage | Stored message records, conversation data, customer-sent images and voice notes | **[update]** | Yes |
+| **[GitHub]** | Nightly database backup artifacts | A full copy of the stored message records | **[update]** | Yes |
 
 > Complete the bracketed provider names and locations; add or remove rows to match the
 > live platform. The LLM Provider row is mandatory — see §4.

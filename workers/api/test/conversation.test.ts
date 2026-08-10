@@ -1,7 +1,7 @@
 import { env, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEBOUNCE_MS, type InboundMessage } from "../src/do/conversation.js";
-import { stubSupabase } from "./fake-supabase.js";
+import { stubSupabase, storedMedia } from "./fake-supabase.js";
 import { encryptUnderMasterKey } from "./fixtures.js";
 
 // Not broad coverage: the two things here that cost real money are a second reply to
@@ -144,7 +144,7 @@ describe("inbound media", () => {
     return calls;
   }
 
-  it("copies media to R2 and stores the key on the message", async () => {
+  it("copies media to Storage and stores the path on the message", async () => {
     const calls = await harness((req, url) => {
       // Hop 1: the id resolves to a short-lived CDN URL.
       if (url.pathname.endsWith("/MEDIA1")) {
@@ -159,14 +159,12 @@ describe("inbound media", () => {
     expect(await conv.onInbound(imageMessage("wamid.m1"))).toBe("accepted");
 
     const insert = calls.find((c) => c.table.startsWith("messages") && c.method === "POST");
-    const key = `media/${ORG}/${CONV}/wamid.m1`;
+    const path = `${ORG}/${CONV}/wamid.m1`;
     expect((insert?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
-      media_r2_key: key,
+      media_key: path,
     });
 
-    const stored = await env.MEDIA.get(key);
-    expect(await stored?.text()).toBe("JPEGBYTES");
-    expect(stored?.httpMetadata?.contentType).toBe("image/jpeg");
+    expect(storedMedia.get(path)).toEqual({ body: "JPEGBYTES", contentType: "image/jpeg" });
   });
 
   it("still persists the message when the media fetch fails", async () => {
@@ -179,7 +177,7 @@ describe("inbound media", () => {
 
     const insert = calls.find((c) => c.table.startsWith("messages") && c.method === "POST");
     expect((insert?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
-      media_r2_key: null,
+      media_key: null,
       body: "look at this",
     });
   });
@@ -221,7 +219,7 @@ describe("erase", () => {
     // Content is scrubbed, not deleted.
     const scrub = calls.find((c) => c.method === "PATCH");
     expect(scrub?.table).toBe("messages");
-    expect(scrub?.body).toEqual({ body: null, media_r2_key: null });
+    expect(scrub?.body).toEqual({ body: null, media_key: null });
     expect(calls.some((c) => c.method === "DELETE" && c.table === "conversations")).toBe(false);
     // The customer's dedupe identifiers still go.
     const dedupe = calls.find((c) => c.method === "DELETE" && c.table === "inbound_dedupe");
@@ -229,18 +227,18 @@ describe("erase", () => {
   });
 
   // An image is never part of the safety proof, so it dies even in the flagged branch.
-  it("deletes the conversation's media from R2, flagged or not", async () => {
+  it("deletes the conversation's media from Storage, flagged or not", async () => {
     stubSupabase((call) => {
       if (call.table === "conversations") return [{ id: CONV }];
       if (call.table === "safety_flags") return [{ id: "sf-1" }];
       return [];
     });
 
-    const key = `media/${ORG}/${CONV}/wamid.e1`;
-    await env.MEDIA.put(key, "BYTES");
+    const path = `${ORG}/${CONV}/wamid.e1`;
+    storedMedia.set(path, { body: "BYTES", contentType: "image/jpeg" });
     const conv = await erased("erase-media");
     await conv.erase();
 
-    expect(await env.MEDIA.get(key)).toBe(null);
+    expect(storedMedia.has(path)).toBe(false);
   });
 });

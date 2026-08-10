@@ -12,9 +12,9 @@
   // SQLite backend, not the classic key-value one. Required on the free tier.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ConversationDO"] }],
 
-  // Media lands here and Postgres stores only the key. Separate from the backup
-  // bucket so a restore drill can never overwrite customer media.
-  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "wa-agent-media" }],
+  // No R2 binding: enabling R2 needs a payment method this account does not have.
+  // Media goes to a private Supabase Storage bucket over REST instead, reusing
+  // SUPABASE_URL + the service role key. See packages/shared/src/storage.ts.
 
   // Keyed by org_id, so one client's runaway integration cannot burn the shared
   // free-tier quota. A burst cap only — `period` accepts 10 or 60 and nothing else,

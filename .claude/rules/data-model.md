@@ -15,7 +15,7 @@ wa_accounts        phone_number_id, waba_id, webhook_slug,
                    app_secret_ciphertext, app_secret_iv, app_secret_key_version
 conversations      org_id, customer wa_id, handoff_state, window_expires_at
 messages           org_id, conversation_id, wa_message_id UNIQUE, direction, body,
-                   media_r2_key, created_at
+                   media_key, created_at
 inbound_dedupe     wa_message_id PK, org_id, seen_at   -- swept weekly
 kb_documents       org_id, raw text
 kb_chunks          org_id, content, embedding vector(1536)   -- dormant

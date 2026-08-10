@@ -24,7 +24,8 @@ wrong.
 7. Never `select *` on `messages`. Paginate at 20.
 8. Realtime subscribes to the open conversation only. Unsubscribe on unmount and tab
    close.
-9. Media to R2 by key, never into Postgres. Meta media URLs expire in ~5 min.
+9. Media to object storage by key, never into Postgres. Meta media URLs expire in
+   ~5 min.
 10. Distress/self-harm/abuse → one hardcoded acknowledgement, then instant human
     handoff. Never model text on a flagged turn, never silence.
 11. Minor detected → stop the AI. Send once: *"I'll need to speak with a parent or
@@ -101,7 +102,9 @@ The workers pool provides no database. Tests 1, 3, 4 need `pnpm db:up`.
 /.github/workflows  Nightly pg_dump
 ```
 
-Supabase Postgres + pgvector + Realtime + Auth. R2 for media and backups. Cloudflare
+Supabase Postgres + pgvector + Realtime + Auth. Supabase Storage for media, GitHub
+Actions artifacts for backups — **no R2, no S3**: both need a payment method this
+account does not have, and there is none coming. Cloudflare
 Pages for the dashboard. LLM `gpt-4o-mini` — **base URL unknown, every call goes
 through `packages/shared/llm.ts`.**
 

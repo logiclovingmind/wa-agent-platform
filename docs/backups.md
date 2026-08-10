@@ -7,7 +7,20 @@ instruction is wrong and must not be implemented. (Independently confirmed by th
 cron CPU limit — even if it could, 10ms would not serialise a database.)
 
 **Correct approach:** a GitHub Actions scheduled workflow. Free Ubuntu runner,
-`pg_dump` available, R2 speaks S3 so upload is one `aws s3 cp`.
+`pg_dump` available, and the dump is kept as a **workflow artifact**.
+
+⚠️ **Artifacts are a compromise, not the right answer.** Object storage is, but R2 and
+S3 both require a payment method on file and this account has none. What that costs us:
+
+- **Retention is capped at 90 days** on the free plan. Anything older is gone. R2 would
+  have kept dumps indefinitely for well under the free tier.
+- **Free-plan artifact storage is small and shared** with everything else the repo
+  stores. As the client's data grows this will start evicting or failing.
+- Artifacts are downloaded through the GitHub UI or `gh run download`, not `aws s3 cp`,
+  so restoring is a manual step rather than a scripted pull.
+
+Treat this as the thing to replace first once a payment method exists. Until then it is
+still a real backup, which is the part that matters.
 
 Three things break it on the first run:
 
@@ -33,9 +46,8 @@ Also:
 - ⚠️ **GitHub disables scheduled workflows after ~60 days of repo inactivity**, and
   scheduled runs are best-effort under load. Add `workflow_dispatch` and actually press
   it if the repo goes quiet.
-- Check the R2 upload lands. Recent AWS CLI v2 versions changed default checksum
-  behaviour in ways that break S3-compatible endpoints; pin the CLI version if uploads
-  start failing with checksum errors.
+- `if-no-files-found: error` on the upload step. An empty artifact is indistinguishable
+  from a healthy backup in the run list, which is the worst possible failure mode here.
 
 ## Not in the backup
 
@@ -47,6 +59,7 @@ stops being acceptable, add a second `--data-only --table=auth.users` dump.
 ## Testing the restore
 
 ```bash
+gh run download --name wa-agent-<timestamp>.dump   # pull the artifact first
 pnpm db:up
 pnpm db:restore-test path/to/wa-agent-….dump
 ```
@@ -63,5 +76,5 @@ a folder of files, not a backup.
 
 Restore last verified: **2026-08-10**, against a local PG17 dump — round trip green,
 15/15 policies restored. ⚠️ Still to do against a **real Supabase dump** once the
-project exists: that is what exercises the session-pooler, client-version and R2 legs
-above, none of which a local dump touches.
+project exists: that is what exercises the session-pooler and client-version legs
+above, neither of which a local dump touches.

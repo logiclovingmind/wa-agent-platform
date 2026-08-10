@@ -55,7 +55,7 @@ describe("scheduled", () => {
 
     const scrub = calls.find((c) => c.method === "PATCH");
     expect(scrub?.table).toBe("messages");
-    expect(scrub?.body).toEqual({ body: null, media_r2_key: null });
+    expect(scrub?.body).toEqual({ body: null, media_key: null });
     expect(scrub?.url.searchParams.get("conversation_id")).toContain(flaggedId);
 
     const del = calls.find((c) => c.method === "DELETE");

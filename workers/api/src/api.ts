@@ -144,7 +144,7 @@ api.post("/api/conversations/:id/export", async (c) => {
   // is bounded by how often a data principal actually asks.
   const messages = await createServiceClient(c.env)
     .from("messages")
-    .select("wa_message_id,direction,type,body,media_r2_key,created_at")
+    .select("wa_message_id,direction,type,body,media_key,created_at")
     .eq("org_id", caller.orgId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
@@ -160,8 +160,8 @@ api.post("/api/conversations/:id/export", async (c) => {
   return c.json({
     exported_at: new Date().toISOString(),
     conversation: conversation.data,
-    // Keys, not bytes. Media is served from R2 separately so one export cannot pull
-    // gigabytes through the Worker.
+    // Keys, not bytes. Media is fetched from Storage separately so one export cannot
+    // pull gigabytes through the Worker.
     messages: messages.data,
   });
 });
