@@ -160,7 +160,7 @@ describe("inbound media", () => {
 
     const insert = calls.find((c) => c.table.startsWith("messages") && c.method === "POST");
     const path = `${ORG}/${CONV}/wamid.m1`;
-    expect((insert?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
+    expect((insert!.body as Array<Record<string, unknown>>)[0]).toMatchObject({
       media_key: path,
     });
 
@@ -176,7 +176,7 @@ describe("inbound media", () => {
     expect(await conv.onInbound(imageMessage("wamid.m2"))).toBe("accepted");
 
     const insert = calls.find((c) => c.table.startsWith("messages") && c.method === "POST");
-    expect((insert?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
+    expect((insert!.body as Array<Record<string, unknown>>)[0]).toMatchObject({
       media_key: null,
       body: "look at this",
     });

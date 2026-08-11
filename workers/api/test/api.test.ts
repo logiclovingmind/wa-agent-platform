@@ -168,7 +168,7 @@ describe("dashboard write API", () => {
     expect(res.status).toBe(200);
     const audit = h.rest.find((c) => c.table.startsWith("audit_log"));
     expect(audit?.method).toBe("POST");
-    const auditRow = (audit?.body as Array<Record<string, unknown>>)[0];
+    const auditRow = (audit!.body as Array<Record<string, unknown>>)[0];
     expect(auditRow).toMatchObject({ action: "conversation_erased" });
   });
 
@@ -195,7 +195,7 @@ describe("dashboard write API", () => {
     expect(payload.conversation).toBeTruthy();
 
     const audit = h.rest.find((c) => c.table.startsWith("audit_log"));
-    expect((audit?.body as Array<Record<string, unknown>>)[0]).toMatchObject({
+    expect((audit!.body as Array<Record<string, unknown>>)[0]).toMatchObject({
       action: "conversation_exported",
       detail: { conversation_id: CONVERSATION, message_count: 25 },
     });
