@@ -1,0 +1,67 @@
+# Applies migrations — and optionally the demo seed — to the live database.
+#
+# The reason this exists: the database password lives only in the SUPABASE_DB_URL
+# secret, so until now every schema change on live meant a human pasting SQL into the
+# Supabase SQL Editor by hand. That is slow, it is where the session-14 outage came
+# from, and it made a five-minute feature a twenty-minute errand. A runner already holds
+# the secret, so let the runner do it.
+#
+# Manual only. Nothing here runs on a push: a migration reaching production because a
+# branch merged is exactly the surprise this project cannot absorb.
+name: migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_demo:
+        description: "Also run scripts/demo-seed.sql (demo rows for clicking through features)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Session pooler string, same as the backup job — see the note there about IPv6.
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PG_MAJOR: "17"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `scripts/migrate.ts` applies only what `schema_migrations` says is missing, so
+      # this is safe to press twice.
+      - name: Apply migrations
+        run: pnpm db:migrate --remote
+
+      - name: Install psql
+        if: ${{ inputs.seed_demo }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          echo "/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_PATH"
+
+      # Demo rows are fake by design — they exist so every feature can be clicked
+      # through in a browser. The file deletes its own rows before inserting, so
+      # re-running it replaces the demo rather than duplicating it.
+      - name: Seed demo data
+        if: ${{ inputs.seed_demo }}
+        run: psql -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" -f scripts/demo-seed.sql
