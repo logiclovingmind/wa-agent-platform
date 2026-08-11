@@ -41,6 +41,32 @@ describe("org isolation, anon path", () => {
     }
   });
 
+  // The cost screen reads spend through an aggregate, which is the one place a
+  // function could quietly sum across orgs. It is security invoker precisely so RLS
+  // still applies inside it.
+  it("aggregates only the caller's own spend in usage_daily", async () => {
+    const rows = await asUser(db, fx.userA, async () =>
+      (await db.query<{ cost_micros: string }>("select cost_micros from public.usage_daily(30)"))
+        .rows,
+    );
+
+    // One row per IST day, and the seed gives each org exactly one event of 1000.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.cost_micros).toBe("1000");
+  });
+
+  it("does not let the anon key call usage_daily at all", async () => {
+    await db.query("begin");
+    try {
+      await db.query("set local role anon");
+      await expect(db.query("select * from public.usage_daily(30)")).rejects.toThrow(
+        /permission denied/i,
+      );
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   it("cannot see org B's members or users", async () => {
     const emails = await asUser(db, fx.userA, async () =>
       (await db.query<{ email: string }>("select email from users")).rows.map((r) => r.email),

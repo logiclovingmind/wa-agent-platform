@@ -40,6 +40,32 @@ export function useNow(everyMs = 30_000): void {
   }, [everyMs]);
 }
 
+/**
+ * Micro-rupees to something an owner can read. One reply costs about ₹0.003 and a busy
+ * month costs a few rupees, so a fixed number of decimals is either noise or a row of
+ * zeros: under ₹1 keeps three decimals, above it rounds to paise.
+ */
+export function inr(micros: number): string {
+  const rupees = micros / 1_000_000;
+  if (rupees > 0 && rupees < 1) return `₹${rupees.toFixed(3)}`;
+  return `₹${rupees.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Today on the IST calendar as `YYYY-MM-DD` — `en-CA` is the locale that formats that
+ * way. Month boundaries are computed by offsetting from now, never by trusting the
+ * browser's own timezone (data-model.md, "Time").
+ */
+export function istToday(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+/** Calendar arithmetic on a `YYYY-MM-DD` day. No timezone involved, so none to get wrong. */
+export function shiftDay(day: string, delta: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + delta)).toISOString().slice(0, 10);
+}
+
 /** Invariant 12: everything is stored UTC and shown IST, whatever the browser's clock says. */
 export function ist(iso: string | null): string {
   if (!iso) return "";

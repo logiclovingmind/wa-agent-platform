@@ -21,6 +21,24 @@ async function post(path: string, body?: unknown): Promise<Response> {
   });
 }
 
+/**
+ * Rupees left in the LLM wallet, or null if the provider did not answer. Platform admin
+ * only, and enforced there: one wallet funds every client, so this is our balance and
+ * not a client's.
+ */
+export async function walletBalance(): Promise<number | null> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("signed out");
+
+  const res = await fetch(`${BASE}/api/usage/balance`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { balance_inr: number | null };
+  return body.balance_inr;
+}
+
 export async function takeover(conversationId: string): Promise<void> {
   const res = await post(`/api/conversations/${conversationId}/takeover`);
   if (!res.ok) throw new Error(await res.text());

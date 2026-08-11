@@ -27,38 +27,18 @@ function attention(c: Conversation, f: SafetyFlag[]) {
   return ATTENTION.find((a) => a.match(c, f)) ?? null;
 }
 
-export default function Inbox() {
+export default function Inbox({ isOwner }: { isOwner: boolean }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [flags, setFlags] = useState<Map<string, SafetyFlag[]>>(new Map());
   const [openId, setOpenId] = useState<string | null>(null);
   const [onlyWaiting, setOnlyWaiting] = useState(false);
-  const [isOwner, setIsOwner] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useNow();
 
   useEffect(() => {
     void load();
-    void loadRole();
   }, []);
-
-  /**
-   * Erase and export are 403 for staff at the Worker, which is the actual lock. This
-   * only decides whether to render the buttons, so a stale answer hides a control or
-   * shows one that fails — never a way in.
-   */
-  async function loadRole() {
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) return;
-    // Every row, not maybeSingle: a user in two orgs would make that error out and
-    // silently downgrade an owner to staff.
-    const { data } = await supabase
-      .from("org_members")
-      .select("role")
-      .eq("user_id", auth.user.id)
-      .returns<{ role: string }[]>();
-    setIsOwner((data ?? []).some((m) => m.role === "owner"));
-  }
 
   async function load() {
     const { data, error } = await supabase
@@ -105,13 +85,10 @@ export default function Inbox() {
   const listed = onlyWaiting ? ranked.filter((c) => attention(c, flags.get(c.id) ?? [])) : ranked;
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-full">
       <aside className="w-72 shrink-0 overflow-y-auto border-r border-border">
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
+        <header className="border-b border-border px-4 py-3">
           <span className="text-sm font-semibold">Conversations</span>
-          <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
-            Sign out
-          </Button>
         </header>
 
         <div className="flex gap-1 border-b border-border px-3 py-2">

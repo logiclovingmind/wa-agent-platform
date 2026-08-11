@@ -92,6 +92,38 @@ from conversations c
 join messages m on m.conversation_id = c.id and m.wa_message_id = 'demo-919990010004-1'
 where c.customer_wa_id = '919990010004';
 
+-- Spend history for the Usage screen. A screen whose only honest state is "₹0.00" is
+-- indistinguishable from one that is broken, and the interesting part — a month total, a
+-- per-reply average, a shape over 30 days — needs history no live demo can produce.
+--
+-- `pricing_category = 'demo_reply'` rather than 'reply' is what makes these removable:
+-- deleting the demo conversations leaves usage rows behind (the FK is `on delete set
+-- null`, because a deleted conversation must not erase what it cost).
+delete from usage_events where pricing_category = 'demo_reply';
+
+insert into usage_events (org_id, conversation_id, pricing_category, cost_micros, currency, created_at)
+select
+  w.org_id,
+  null,
+  'demo_reply',
+  -- Micro-INR, in the range a real gpt-4o-mini reply lands in: ₹0.002–₹0.005 for a
+  -- prompt of history plus a short answer.
+  2000 + (random() * 3000)::int,
+  'INR',
+  -- IST calendar days, matching how usage_daily buckets them, spread across working
+  -- hours so the timestamps read like traffic rather than a batch job.
+  (((now() at time zone 'Asia/Kolkata')::date - d.day) + interval '9 hours' + random() * interval '11 hours')
+    at time zone 'Asia/Kolkata'
+from (select org_id from wa_accounts order by id limit 1) w
+cross join generate_series(0, 29) as d(day)
+-- Volume wobbles day to day and thins out on Sundays, so the chart has a shape to read
+-- instead of a flat wall.
+cross join lateral generate_series(
+  1,
+  case when extract(dow from (now() at time zone 'Asia/Kolkata')::date - d.day) = 0
+       then 3 else 9 + ((d.day * 7) % 13) end
+) as r(n);
+
 commit;
 
 -- The live database still holds the earlier six-digit demo rows (999001…999008), which
@@ -100,5 +132,6 @@ commit;
 --
 -- Cleanup, once the walkthrough is done:
 --   delete from conversations where customer_wa_id like '9199900%';
+--   delete from usage_events where pricing_category = 'demo_reply';
 -- and the demo objects, which no cascade reaches:
 --   pnpm tsx scripts/demo-media.ts --remove

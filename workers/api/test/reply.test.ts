@@ -175,8 +175,8 @@ describe("reply path", () => {
       org_id: ORG,
       pricing_category: "reply",
       // The stub returns 100 prompt + 20 completion tokens:
-      // 100 * 0.15 + 20 * 0.6 = 27 micro-USD.
-      cost_micros: 27,
+      // 100 * 14 + 20 * 57 = 2540 micro-INR, i.e. ₹0.00254.
+      cost_micros: 2540,
     });
   });
 

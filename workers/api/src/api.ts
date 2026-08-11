@@ -22,7 +22,7 @@ api.use("/api/*", (c, next) =>
   cors({
     origin: c.env.DASHBOARD_ORIGIN,
     allowHeaders: ["authorization", "content-type"],
-    allowMethods: ["POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "OPTIONS"],
   })(c, next),
 );
 
@@ -164,4 +164,37 @@ api.post("/api/conversations/:id/export", async (c) => {
     // pull gigabytes through the Worker.
     messages: messages.data,
   });
+});
+
+/**
+ * What is left in the LLM wallet. Through the Worker because the LLM key buys things
+ * (invariant 6) and must never reach a browser.
+ *
+ * **Platform admin only, not org owner.** There is one aicredits.in wallet behind every
+ * client, so this number is ours, not theirs — a client owner seeing it would be
+ * reading the platform's books, and worse, would watch it move when another client
+ * talks. Their own spend is `usage_daily`, which is per-org under RLS.
+ */
+api.get("/api/usage/balance", async (c) => {
+  const caller = c.get("caller");
+  const { data, error } = await createServiceClient(c.env)
+    .from("users")
+    .select("is_platform_admin")
+    .eq("id", caller.userId)
+    .maybeSingle<{ is_platform_admin: boolean }>();
+  if (error) throw new Error(`admin lookup failed: ${error.message}`);
+  if (!data?.is_platform_admin) return c.json({ error: "admin only" }, 403);
+
+  // The credits endpoint is a sibling of the OpenAI-compatible surface, not part of it:
+  // LLM_BASE_URL ends in /v1, this lives at /api/v1/credits on the same origin.
+  const url = new URL("/api/v1/credits", c.env.LLM_BASE_URL);
+  const res = await fetch(url, { headers: { authorization: `Bearer ${c.env.LLM_API_KEY}` } });
+
+  // A provider that does not answer is not an error worth a 500 — the screen shows
+  // spend either way and simply omits the balance. This endpoint is provider-shaped and
+  // aicredits-specific; anything else returns null here rather than a wrong number.
+  if (!res.ok) return c.json({ balance_inr: null });
+  const body = (await res.json()) as { data?: { credits_inr?: unknown } };
+  const balance = body.data?.credits_inr;
+  return c.json({ balance_inr: typeof balance === "number" ? balance : null });
 });

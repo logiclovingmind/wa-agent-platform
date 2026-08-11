@@ -41,6 +41,13 @@ export function customerLabel(c: Conversation): string {
   return c.customer_name ?? `+${c.customer_wa_id}`;
 }
 
+/** One IST calendar day of model spend, as returned by the `usage_daily` RPC. */
+export interface DailyUsage {
+  day: string;
+  cost_micros: number;
+  events: number;
+}
+
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
 
 export interface SafetyFlag {

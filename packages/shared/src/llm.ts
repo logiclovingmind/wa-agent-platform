@@ -15,15 +15,21 @@ export interface LlmEnv {
 export const LLM_TIMEOUT_MS = 12_000;
 export const DEFAULT_MODEL = "gpt-4o-mini";
 
-/** gpt-4o-mini list price, in micro-USD per token. A constant, not an env var: it is
- * the price of the DEFAULT_MODEL, so revisit this when the model changes. */
-export const MICRO_USD_PER_PROMPT_TOKEN = 0.15; // $0.15 / 1M input tokens
-export const MICRO_USD_PER_COMPLETION_TOKEN = 0.6; // $0.60 / 1M output tokens
+/**
+ * gpt-4o-mini price on aicredits.in, in micro-INR per token. The wallet is debited in
+ * rupees, so rupees are what `usage_events.cost_micros` holds and what `currency`
+ * has always claimed. Their listed rate tracks the live USD/INR rate, so every stored
+ * figure is a snapshot that drifts — the wallet balance, not this sum, is the number
+ * that settles an argument. A constant, not an env var: it is the price of the
+ * DEFAULT_MODEL, so revisit this when the model changes.
+ */
+export const MICRO_INR_PER_PROMPT_TOKEN = 14; // ₹14 / 1M input tokens
+export const MICRO_INR_PER_COMPLETION_TOKEN = 57; // ₹57 / 1M output tokens
 
 export function costMicros(usage: { promptTokens: number; completionTokens: number }): number {
   return Math.round(
-    usage.promptTokens * MICRO_USD_PER_PROMPT_TOKEN +
-      usage.completionTokens * MICRO_USD_PER_COMPLETION_TOKEN,
+    usage.promptTokens * MICRO_INR_PER_PROMPT_TOKEN +
+      usage.completionTokens * MICRO_INR_PER_COMPLETION_TOKEN,
   );
 }
 
