@@ -3,6 +3,7 @@ import {
   IST_TIME_ZONE,
   WINDOW_MS,
   isWindowOpen,
+  isWithinHours,
   parseMetaTimestamp,
   windowExpiresAt,
 } from "@wa/shared";
@@ -72,5 +73,37 @@ describe("IST", () => {
 describe("parseMetaTimestamp", () => {
   it("reads Meta's epoch seconds as a string", () => {
     expect(parseMetaTimestamp("1772000000").toISOString()).toBe("2026-02-25T06:13:20.000Z");
+  });
+});
+
+describe("isWithinHours", () => {
+  /** 12:00 IST is 06:30 UTC. Everything below is expressed in UTC and read in IST. */
+  const at = (utc: string) => new Date(`2026-08-11T${utc}:00.000Z`);
+
+  it("treats a client with no hours as always open", () => {
+    expect(isWithinHours(at("03:00"), null, null)).toBe(true);
+    expect(isWithinHours(at("22:00"), "09:00", null)).toBe(true);
+  });
+
+  it("opens and closes on the IST clock, not the UTC one", () => {
+    // 03:30 UTC is 09:00 IST exactly — open. An implementation that compared UTC hours
+    // would have this business shut until the afternoon.
+    expect(isWithinHours(at("03:30"), "09:00", "20:00")).toBe(true);
+    expect(isWithinHours(at("03:29"), "09:00", "20:00")).toBe(false);
+    // 14:30 UTC is 20:00 IST, the closing minute itself.
+    expect(isWithinHours(at("14:29"), "09:00", "20:00")).toBe(true);
+    expect(isWithinHours(at("14:30"), "09:00", "20:00")).toBe(false);
+  });
+
+  it("handles a window that crosses midnight", () => {
+    // Open 18:00 to 01:00 IST — a restaurant, not a mistake.
+    expect(isWithinHours(at("14:00"), "18:00", "01:00")).toBe(true); // 19:30 IST
+    expect(isWithinHours(at("19:00"), "18:00", "01:00")).toBe(true); // 00:30 IST
+    expect(isWithinHours(at("20:00"), "18:00", "01:00")).toBe(false); // 01:30 IST
+  });
+
+  it("stays open rather than shut on a value it cannot read", () => {
+    // A malformed time must never be the reason a business stops answering.
+    expect(isWithinHours(at("03:00"), "nine", "20:00")).toBe(true);
   });
 });

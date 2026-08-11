@@ -18,6 +18,18 @@ export async function encryptUnderMasterKey(
   return { ciphertext: b64(new Uint8Array(ct)), iv: b64(iv) };
 }
 
+/** The other direction: proves that what onboarding stored is the token that was typed. */
+export async function decryptUnderMasterKey(ciphertext: string, iv: string): Promise<string> {
+  const bytes = (b: string) => Uint8Array.from(atob(b), (ch) => ch.charCodeAt(0));
+  const key = await crypto.subtle.importKey("raw", MASTER_KEY, "AES-GCM", false, ["decrypt"]);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: bytes(iv) },
+    key,
+    bytes(ciphertext),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 /** The `X-Hub-Signature-256` header Meta would send for this body. */
 export async function signBody(appSecret: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(

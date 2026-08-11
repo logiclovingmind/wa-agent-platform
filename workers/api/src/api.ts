@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createOrgDb, createServiceClient } from "@wa/shared";
+import { admin } from "./admin.js";
 import { authenticate, type Caller } from "./auth.js";
 import type { Env } from "./env.js";
 
@@ -16,13 +17,16 @@ import type { Env } from "./env.js";
 export const api = new Hono<{ Bindings: Env; Variables: { caller: Caller } }>();
 
 // The dashboard is on Pages and the API is on workers.dev, so this is cross-origin.
-// One exact origin, not "*": with credentials in a header, a wildcard would let any
-// site spend a client's Meta quota.
+// Exact origins, not "*": with credentials in a header, a wildcard would let any site
+// spend a client's Meta quota. A list rather than one, because `app.` and `admin.` are
+// the same bundle on two hostnames (admin-panel.md §9).
 api.use("/api/*", (c, next) =>
   cors({
-    origin: c.env.DASHBOARD_ORIGIN,
+    origin: c.env.DASHBOARD_ORIGIN.split(",").map((o) => o.trim()),
     allowHeaders: ["authorization", "content-type"],
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    // PATCH and DELETE are here because the admin panel uses both, and a missing method
+    // fails at the preflight — which looks like the route is broken, not the CORS policy.
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   })(c, next),
 );
 
@@ -33,6 +37,10 @@ api.use("/api/*", async (c, next) => {
   await next();
 });
 
+// Mounted after the middleware above and not before: the admin routes inherit this
+// CORS policy and this authentication, and add only the platform-admin gate.
+api.route("/", admin);
+
 /** Resolves the conversation inside the caller's org, then names its Durable Object. */
 async function conversationStub(c: {
   env: Env;
@@ -40,6 +48,11 @@ async function conversationStub(c: {
   req: { param: (name: string) => string };
 }) {
   const caller = c.get("caller");
+  // A platform admin has no org and therefore no conversations: this is the same 404 a
+  // stranger's id gets, which is the honest answer. Reading a client's thread is the
+  // owner's own login, never this one.
+  if (caller.kind !== "member") return null;
+
   const { data, error } = await createOrgDb(c.env, caller.orgId)
     .select("conversations", "id,wa_account_id,customer_wa_id", { limit: 1 })
     .eq("id", c.req.param("id"))
@@ -100,14 +113,17 @@ api.post("/api/conversations/:id/reply", async (c) => {
 // trigger it, and it is audited. The DO decides what to keep (flagged conversations
 // keep their safety proof).
 api.post("/api/conversations/:id/erase", async (c) => {
-  if (c.get("caller").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const caller = c.get("caller");
+  if (caller.kind !== "member" || caller.role !== "owner") {
+    return c.json({ error: "owner only" }, 403);
+  }
 
   const stub = await conversationStub(c);
   if (!stub) return c.json({ error: "not found" }, 404);
 
   await stub.erase();
-  const { error } = await createOrgDb(c.env, c.get("caller").orgId).insert("audit_log", {
-    actor_user_id: c.get("caller").userId,
+  const { error } = await createOrgDb(c.env, caller.orgId).insert("audit_log", {
+    actor_user_id: caller.userId,
     action: "conversation_erased",
     detail: { conversation_id: c.req.param("id") },
   });
@@ -126,7 +142,9 @@ api.post("/api/conversations/:id/erase", async (c) => {
  */
 api.post("/api/conversations/:id/export", async (c) => {
   const caller = c.get("caller");
-  if (caller.role !== "owner") return c.json({ error: "owner only" }, 403);
+  if (caller.kind !== "member" || caller.role !== "owner") {
+    return c.json({ error: "owner only" }, 403);
+  }
 
   const conversationId = c.req.param("id");
   const conversation = await createOrgDb(c.env, caller.orgId)
@@ -176,14 +194,7 @@ api.post("/api/conversations/:id/export", async (c) => {
  * talks. Their own spend is `usage_daily`, which is per-org under RLS.
  */
 api.get("/api/usage/balance", async (c) => {
-  const caller = c.get("caller");
-  const { data, error } = await createServiceClient(c.env)
-    .from("users")
-    .select("is_platform_admin")
-    .eq("id", caller.userId)
-    .maybeSingle<{ is_platform_admin: boolean }>();
-  if (error) throw new Error(`admin lookup failed: ${error.message}`);
-  if (!data?.is_platform_admin) return c.json({ error: "admin only" }, 403);
+  if (c.get("caller").kind !== "platform_admin") return c.json({ error: "admin only" }, 403);
 
   // The credits endpoint is a sibling of the OpenAI-compatible surface, not part of it:
   // LLM_BASE_URL ends in /v1, this lives at /api/v1/credits on the same origin.

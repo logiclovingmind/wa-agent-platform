@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
-import { supabase, type AdminOrg } from "./lib/supabase";
-import { walletBalance } from "./lib/api";
+import { supabase, SAFETY_LABEL, type AdminHealth, type AdminOrg } from "./lib/supabase";
+import {
+  clientHealth,
+  platformStats,
+  setControls,
+  setTemplate,
+  walletBalance,
+  type NumberHealth,
+  type PlatformStats,
+} from "./lib/api";
+import { health, type Verdict } from "./lib/health";
+import { AuditLog, FlagQueue, OrgUsers, PlatformAdmins } from "./AdminGovernance";
+import { Offboard, OnboardClient } from "./AdminOnboard";
 import { inr, ist } from "./lib/utils";
 
 /**
@@ -20,20 +31,45 @@ import { inr, ist } from "./lib/utils";
  */
 export default function Admin() {
   const [orgs, setOrgs] = useState<AdminOrg[]>([]);
+  const [rows, setRows] = useState<Record<string, AdminHealth>>({});
   const [balance, setBalance] = useState<number | null>(null);
+  const [platform, setPlatform] = useState<PlatformStats | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Meta is only asked about a client whose row has been opened — see clientHealth().
+  const [meta, setMeta] = useState<Record<string, NumberHealth[]>>({});
+  const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
   }, []);
 
   async function load() {
-    const { data, error } = await supabase.rpc("admin_orgs");
+    const [list, rollup] = await Promise.all([
+      supabase.rpc("admin_orgs"),
+      supabase.rpc("admin_health"),
+    ]);
+
     // Same reason as the inbox and the usage screen: a failed read and a quiet platform
     // render identically, and "no clients" is a claim not worth making by accident.
-    setLoadError(error ? error.message : null);
-    setOrgs((data ?? []) as AdminOrg[]);
+    setLoadError(list.error?.message ?? rollup.error?.message ?? null);
+    setOrgs((list.data ?? []) as AdminOrg[]);
+    setRows(
+      Object.fromEntries(((rollup.data ?? []) as AdminHealth[]).map((h) => [h.org_id, h])),
+    );
+
     setBalance(await walletBalance().catch(() => null));
+    setPlatform(await platformStats().catch(() => null));
+  }
+
+  async function openRow(orgId: string) {
+    if (open === orgId) return setOpen(null);
+    setOpen(orgId);
+    if (meta[orgId]) return;
+
+    // A failure here is a finding, not an error state: the endpoint answers with nulls
+    // when Meta rejects the token, and an empty list reads as "no numbers configured".
+    const numbers = await clientHealth(orgId).catch(() => []);
+    setMeta((m) => ({ ...m, [orgId]: numbers }));
   }
 
   const totalCost = orgs.reduce((n, o) => n + Number(o.month_cost_micros), 0);
@@ -91,25 +127,65 @@ export default function Admin() {
         />
       </div>
 
-      <div className="mb-8 rounded border border-border p-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          LLM wallet — platform-wide
+      <div className="mb-8 grid gap-3 lg:grid-cols-2">
+        <div className="rounded border border-border p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            LLM wallet — platform-wide
+          </div>
+          <div className="mt-1 text-2xl font-semibold">
+            {balance === null ? "unavailable" : `₹${balance.toFixed(2)}`}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {runwayDays !== null
+              ? `About ${runwayDays} days left at this month's rate. One wallet funds every client — at zero, all of them stop replying at once.`
+              : "One wallet funds every client. At zero, all of them stop replying at once."}
+          </p>
         </div>
-        <div className="mt-1 text-2xl font-semibold">
-          {balance === null ? "unavailable" : `₹${balance.toFixed(2)}`}
+
+        {/* The other shared ceiling. Storage is 1GB for every client together, so one
+            client's photo backlog is everyone's outage. */}
+        <div className="rounded border border-border p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            Media storage — platform-wide
+          </div>
+          <div className="mt-1 text-2xl font-semibold">
+            {platform === null ? "unavailable" : `${mb(platform.media_bytes)} MB`}
+          </div>
+          {platform !== null && (
+            <>
+              <div className="mt-2 h-1.5 w-full rounded bg-muted">
+                <div
+                  className={`h-1.5 rounded ${
+                    platform.media_bytes >= platform.media_alarm_bytes
+                      ? "bg-destructive"
+                      : "bg-foreground/40"
+                  }`}
+                  style={{
+                    width: `${Math.min(100, (platform.media_bytes / platform.media_limit_bytes) * 100)}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                of {mb(platform.media_limit_bytes)} MB, alarm at{" "}
+                {mb(platform.media_alarm_bytes)} MB. Media is deleted after 30 days.
+              </p>
+            </>
+          )}
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {runwayDays !== null
-            ? `About ${runwayDays} days left at this month's rate. One wallet funds every client — at zero, all of them stop replying at once.`
-            : "One wallet funds every client. At zero, all of them stop replying at once."}
-        </p>
       </div>
+
+      <OnboardClient onChanged={() => void load()} />
+
+      {/* Above the table on purpose: an open distress flag outranks every number on this
+          screen, and it is the one thing here that belongs to no single client's row. */}
+      <FlagQueue onChanged={() => void load()} />
 
       <div className="overflow-x-auto rounded border border-border">
         <table className="w-full text-sm">
           <thead className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-medium">Client</th>
+              <th className="px-4 py-2 font-medium">Working</th>
               <th className="px-4 py-2 font-medium">Sector</th>
               <th className="px-4 py-2 text-right font-medium">This month</th>
               <th className="px-4 py-2 text-right font-medium">Replies</th>
@@ -120,46 +196,30 @@ export default function Admin() {
             </tr>
           </thead>
           <tbody>
-            {orgs.map((o) => (
-              <tr key={o.org_id} className="border-b border-border last:border-0">
-                <td className="px-4 py-2 font-medium">
-                  {o.name}
-                  {/* Nobody pays for this one, so its spend is not revenue and its
-                      silence is not an incident. Unlabelled it reads as client #1. */}
-                  {o.is_demo && (
-                    <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
-                      Demo
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">{o.sector}</td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {inr(Number(o.month_cost_micros))}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
-                  {Number(o.month_events)}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
-                  {Number(o.conversations)}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  <Count n={Number(o.waiting)} />
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  <Count n={Number(o.open_flags)} />
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {/* A client with no traffic at all is the one worth noticing — an
-                      onboarding that never got its webhook subscribed looks exactly
-                      like this. */}
-                  {o.last_message_at ? ist(o.last_message_at) : "never"}
-                </td>
-              </tr>
-            ))}
+            {orgs.map((o) => {
+              const verdict = health({
+                db: rows[o.org_id],
+                meta: meta[o.org_id],
+                walletEmpty: balance !== null && balance <= 0,
+              });
+
+              return (
+                <RowGroup
+                  key={o.org_id}
+                  org={o}
+                  db={rows[o.org_id]}
+                  meta={meta[o.org_id]}
+                  verdict={verdict}
+                  expanded={open === o.org_id}
+                  onToggle={() => void openRow(o.org_id)}
+                  onChanged={() => void load()}
+                />
+              );
+            })}
 
             {orgs.length === 0 && !loadError && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-muted-foreground">
+                <td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">
                   No clients yet.
                 </td>
               </tr>
@@ -168,13 +228,549 @@ export default function Admin() {
         </table>
       </div>
 
-      <p className="mt-6 text-xs text-muted-foreground">
+      <p className="my-6 text-xs text-muted-foreground">
         Spend is model cost only, snapshotted per call at the rate charged at the time.
         Meta's own per-conversation fees are billed separately by Meta and are not counted
         here.
       </p>
+
+      <PlatformAdmins />
+      <AuditLog orgs={orgs} />
     </div>
   );
+}
+
+/** One client's row, plus the panel that opens under it. */
+function RowGroup({
+  org: o,
+  db,
+  meta,
+  verdict,
+  expanded,
+  onToggle,
+  onChanged,
+}: {
+  org: AdminOrg;
+  db: AdminHealth | undefined;
+  meta: NumberHealth[] | undefined;
+  verdict: Verdict;
+  expanded: boolean;
+  onToggle: () => void;
+  onChanged: () => void;
+}) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/40"
+      >
+        <td className="px-4 py-2 font-medium">
+          {o.name}
+          {/* Nobody pays for this one, so its spend is not revenue and its
+              silence is not an incident. Unlabelled it reads as client #1. */}
+          {o.is_demo && (
+            <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
+              Demo
+            </span>
+          )}
+          {/* Visible without opening the row: a paused client looks like a quiet one
+              on every other column, and forgetting a pause is how a client goes a
+              week without replies. */}
+          {db?.ai_paused && (
+            <span className="ml-2 rounded border border-amber-500/50 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-amber-600">
+              Paused
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-2">
+          <Light verdict={verdict} />
+        </td>
+        <td className="px-4 py-2 text-muted-foreground">{o.sector}</td>
+        <td className="px-4 py-2 text-right tabular-nums">
+          {inr(Number(o.month_cost_micros))}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+          {Number(o.month_events)}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+          {Number(o.conversations)}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums">
+          <Count n={Number(o.waiting)} />
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums">
+          <Count n={Number(o.open_flags)} />
+        </td>
+        <td className="px-4 py-2 text-muted-foreground">
+          {/* A client with no traffic at all is the one worth noticing — an
+              onboarding that never got its webhook subscribed looks exactly
+              like this. */}
+          {o.last_message_at ? ist(o.last_message_at) : "never"}
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr className="border-b border-border bg-muted/20 last:border-0">
+          <td colSpan={9} className="px-4 py-4">
+            <Detail
+              orgId={o.org_id}
+              name={o.name}
+              db={db}
+              meta={meta}
+              verdict={verdict}
+              onChanged={onChanged}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/**
+ * Everything known about one client, in the order it is acted on: what is wrong, what
+ * Meta says, then the timeline that explains it.
+ */
+function Detail({
+  orgId,
+  name,
+  db,
+  meta,
+  verdict,
+  onChanged,
+}: {
+  orgId: string;
+  name: string;
+  db: AdminHealth | undefined;
+  meta: NumberHealth[] | undefined;
+  verdict: Verdict;
+  onChanged: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {verdict.reasons.length > 0 && (
+        <ul className="space-y-1 text-xs">
+          {verdict.reasons.map((r) => (
+            <li key={r} className={verdict.level === "red" ? "text-destructive" : ""}>
+              {r}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="grid gap-4 text-xs lg:grid-cols-2">
+        <div>
+          <div className="mb-2 uppercase tracking-wide text-muted-foreground">Meta</div>
+          {meta === undefined && <p className="text-muted-foreground">Checking…</p>}
+          {meta?.length === 0 && (
+            <p className="text-destructive">
+              No WhatsApp number configured. This client cannot receive anything.
+            </p>
+          )}
+          {meta?.map((n) => (
+            <dl key={n.phone_number_id} className="space-y-1">
+              <Field label="Number" value={n.display_phone_number} />
+              <Field
+                label="Token"
+                value={
+                  n.token.valid === false
+                    ? "invalid"
+                    : n.token.valid === null
+                      ? "Meta did not answer"
+                      : n.token.expires_at === null
+                        ? "valid, permanent"
+                        : `valid until ${ist(new Date(n.token.expires_at * 1000).toISOString())}`
+                }
+                bad={n.token.valid === false}
+              />
+              <Field
+                label="App subscribed to WABA"
+                value={n.subscribed === null ? "unknown" : n.subscribed ? "yes" : "no"}
+                bad={n.subscribed === false}
+              />
+              <Field
+                label="Quality rating"
+                value={n.number?.quality_rating ?? "unknown"}
+                bad={!!n.number?.quality_rating && n.number.quality_rating !== "GREEN"}
+              />
+              <Field label="Messaging limit" value={n.number?.messaging_limit_tier ?? "unknown"} />
+              <Field
+                label="Re-engagement template"
+                value={
+                  n.template === null
+                    ? "none configured"
+                    : `${n.template.name} — ${n.template.status ?? "not found in this WABA"}`
+                }
+                bad={n.template !== null && n.template.status !== "APPROVED"}
+              />
+            </dl>
+          ))}
+        </div>
+
+        <div>
+          <div className="mb-2 uppercase tracking-wide text-muted-foreground">Our data</div>
+          {db === undefined ? (
+            <p className="text-muted-foreground">No health row.</p>
+          ) : (
+            <dl className="space-y-1">
+              <Field label="Last inbound" value={db.last_inbound_at ? ist(db.last_inbound_at) : "never"} />
+              <Field
+                label="Last reply sent"
+                value={db.last_outbound_at ? ist(db.last_outbound_at) : "never"}
+                bad={!!db.last_inbound_at && !db.last_outbound_at}
+              />
+              <Field
+                label="Last rejected send"
+                value={db.last_failed_at ? ist(db.last_failed_at) : "none"}
+                bad={!!db.last_failed_at}
+              />
+              {/* Free-form replies are only possible inside this window; outside it the
+                  only way to reach a customer is a paid template. */}
+              <Field label="Open 24h windows" value={String(db.open_windows)} />
+              <Field
+                label="Waiting since"
+                value={db.waiting_since ? ist(db.waiting_since) : "nobody waiting"}
+              />
+              <Field
+                label="Open safety flags"
+                value={
+                  Object.entries(db.open_flags_by_kind)
+                    .map(([k, n]) => `${n} ${SAFETY_LABEL[k as keyof typeof SAFETY_LABEL] ?? k}`)
+                    .join(", ") || "none"
+                }
+                bad={Object.keys(db.open_flags_by_kind).length > 0}
+              />
+              <Field label="Media stored" value={`${mb(db.media_bytes)} MB`} />
+            </dl>
+          )}
+        </div>
+      </div>
+
+      {db && <Controls orgId={orgId} db={db} onChanged={onChanged} />}
+
+      {meta && meta.length > 0 && (
+        <TemplateForm orgId={orgId} numbers={meta} onChanged={onChanged} />
+      )}
+
+      <OrgUsers orgId={orgId} onChanged={onChanged} />
+
+      <Offboard orgId={orgId} name={name} onChanged={onChanged} />
+
+      {/* The limit that makes the rest of this panel trustworthy. Counts and kinds cross
+          the boundary; words never do. */}
+      <p className="text-xs text-muted-foreground">
+        Safety flags are shown as counts and kinds only. Reading the messages behind them
+        needs the client's own owner login — this account holds no membership in any org.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The runtime controls of docs/admin-panel.md §3. Every one of them is a row edit and
+ * none of them is a deploy — that is the test this panel exists to keep passing.
+ *
+ * Pause is its own button, deliberately apart from the form. It is the "the bot said
+ * something wrong, stop it now" switch, and a kill switch behind a Save button is not a
+ * kill switch.
+ */
+function Controls({
+  orgId,
+  db,
+  onChanged,
+}: {
+  orgId: string;
+  db: AdminHealth;
+  onChanged: () => void;
+}) {
+  const [cap, setCap] = useState(db.cap_micros === null ? "" : String(db.cap_micros / 1_000_000));
+  const [openAt, setOpenAt] = useState(db.hours_open_ist ?? "");
+  const [closeAt, setCloseAt] = useState(db.hours_close_ist ?? "");
+  const [outOfHours, setOutOfHours] = useState(db.out_of_hours);
+  const [months, setMonths] = useState(db.retention_months === null ? "" : String(db.retention_months));
+  const [mediaDays, setMediaDays] = useState(
+    db.media_retention_days === null ? "" : String(db.media_retention_days),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(patch: Parameters<typeof setControls>[1]) {
+    setBusy(true);
+    setError(null);
+    try {
+      await setControls(orgId, patch);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const capMicros = cap.trim() === "" ? null : Math.round(Number(cap) * 1_000_000);
+  const spent = db.month_spend_micros;
+
+  return (
+    <div className="rounded border border-border bg-background p-4">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">Controls</div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void save({ ai_paused: !db.ai_paused })}
+          className={`rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+            db.ai_paused
+              ? "bg-emerald-600 text-white"
+              : "border border-destructive/50 text-destructive"
+          }`}
+        >
+          {db.ai_paused ? "Resume the AI" : "Pause the AI"}
+        </button>
+      </div>
+
+      <p className="mb-3 text-xs text-muted-foreground">
+        {db.ai_paused
+          ? "Paused. Every new message is answered with a holding line and handed to a person."
+          : "The AI is answering. Pausing hands every new conversation to a person instead."}
+      </p>
+
+      <div className="grid gap-3 text-xs sm:grid-cols-2">
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Monthly spend cap (₹)</span>
+          <input
+            value={cap}
+            onChange={(e) => setCap(e.target.value)}
+            placeholder="no cap"
+            inputMode="decimal"
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          />
+          <span className="block text-muted-foreground">
+            {inr(spent)} spent this month.{" "}
+            {db.cap_micros === null
+              ? "Uncapped."
+              : `At the cap the AI stops and hands off — it does not go quiet.`}
+          </span>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Outside business hours</span>
+          <select
+            value={outOfHours}
+            onChange={(e) => setOutOfHours(e.target.value as "reply" | "handoff")}
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          >
+            <option value="reply">Reply as usual</option>
+            <option value="handoff">Say we're closed and hand off</option>
+          </select>
+          <span className="block text-muted-foreground">
+            Leave the hours empty for a client that is always open.
+          </span>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Opens (IST)</span>
+          <input
+            type="time"
+            value={openAt}
+            onChange={(e) => setOpenAt(e.target.value)}
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Closes (IST)</span>
+          <input
+            type="time"
+            value={closeAt}
+            onChange={(e) => setCloseAt(e.target.value)}
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Keep messages (months)</span>
+          <input
+            value={months}
+            onChange={(e) => setMonths(e.target.value)}
+            placeholder="12 — platform default"
+            inputMode="numeric"
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-muted-foreground">Keep media (days)</span>
+          <input
+            value={mediaDays}
+            onChange={(e) => setMediaDays(e.target.value)}
+            placeholder="30 — platform default"
+            inputMode="numeric"
+            className="w-full rounded border border-border bg-transparent px-2 py-1"
+          />
+        </label>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void save({
+              cap_micros: capMicros,
+              hours_open_ist: openAt || null,
+              hours_close_ist: closeAt || null,
+              out_of_hours: outOfHours,
+              retention_months: months.trim() === "" ? null : Number(months),
+              media_retention_days: mediaDays.trim() === "" ? null : Number(mediaDays),
+            })
+          }
+          className="rounded bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+        >
+          Save controls
+        </button>
+        {error && <span className="text-xs text-destructive">{error}</span>}
+      </div>
+
+      {/* Said out loud rather than left as a gap in the panel: §3 lists a per-org rate
+          limit, and the Cloudflare Rate Limiting binding takes its configuration from
+          wrangler.jsonc at deploy time. A per-client value there would be a deploy per
+          client, which is the one thing the whole design forbids. */}
+      <p className="mt-3 text-xs text-muted-foreground">
+        The per-org webhook rate limit is not settable here. Cloudflare's rate-limit
+        binding is fixed at deploy time, so a per-client value would mean a deploy per
+        client.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The re-engagement template, per number. Its columns have existed since migration 0005
+ * and until now the only way to set them was an UPDATE by hand.
+ */
+function TemplateForm({
+  orgId,
+  numbers,
+  onChanged,
+}: {
+  orgId: string;
+  numbers: NumberHealth[];
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Record<string, { name: string; language: string }>>(() =>
+    Object.fromEntries(
+      numbers.map((n) => [
+        n.phone_number_id,
+        { name: n.template?.name ?? "", language: n.template?.language ?? "en" },
+      ]),
+    ),
+  );
+
+  async function save(waAccountId: string, value: { name: string; language: string }) {
+    setBusy(true);
+    setError(null);
+    try {
+      await setTemplate(waAccountId, orgId, value.name.trim() === "" ? null : value);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded border border-border bg-background p-4 text-xs">
+      <div className="mb-3 uppercase tracking-wide text-muted-foreground">
+        Re-engagement template
+      </div>
+      <p className="mb-3 text-muted-foreground">
+        The only message that may legally go out after the 24-hour window has closed. Its
+        name and language must match an approved template in this client's WABA; leave the
+        name empty to switch it off.
+      </p>
+
+      {numbers.map((n) => {
+        const value = draft[n.phone_number_id] ?? { name: "", language: "en" };
+        return (
+          <div key={n.phone_number_id} className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="w-36 text-muted-foreground">{n.display_phone_number}</span>
+            <input
+              value={value.name}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  [n.phone_number_id]: { ...value, name: e.target.value },
+                }))
+              }
+              placeholder="template name"
+              className="flex-1 rounded border border-border bg-transparent px-2 py-1"
+            />
+            <input
+              value={value.language}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  [n.phone_number_id]: { ...value, language: e.target.value },
+                }))
+              }
+              placeholder="en"
+              className="w-20 rounded border border-border bg-transparent px-2 py-1"
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void save(n.wa_account_id, value)}
+              className="rounded border border-border px-3 py-1 font-medium disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+        );
+      })}
+      {error && <span className="text-destructive">{error}</span>}
+    </div>
+  );
+}
+
+function Field({ label, value, bad = false }: { label: string; value: string; bad?: boolean }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={bad ? "font-medium text-destructive" : ""}>{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * Red is "this client is not replying right now"; amber is "it works but is degrading".
+ * The dot is deliberately paired with a word — a colour alone is unreadable to some
+ * people and ambiguous to everyone else.
+ */
+function Light({ verdict }: { verdict: Verdict }) {
+  const colour = { red: "bg-destructive", amber: "bg-amber-500", green: "bg-emerald-500" }[
+    verdict.level
+  ];
+  const label = { red: "Not replying", amber: "Degraded", green: "OK" }[verdict.level];
+
+  return (
+    <span className="flex items-center gap-2 whitespace-nowrap">
+      <span className={`inline-block h-2 w-2 rounded-full ${colour}`} />
+      <span className={verdict.level === "red" ? "font-medium text-destructive" : ""}>{label}</span>
+      {/* Green from our own data alone is not the same claim as green from Meta too, and
+          saying so is cheaper than being wrong about it. */}
+      {verdict.partial && verdict.level === "green" && (
+        <span className="text-xs text-muted-foreground">(Meta not checked)</span>
+      )}
+    </span>
+  );
+}
+
+/** Bytes as whole megabytes. Anything finer is noise against a 1GB ceiling. */
+function mb(bytes: number): string {
+  return Math.round(bytes / (1024 * 1024)).toLocaleString("en-IN");
 }
 
 function Card({

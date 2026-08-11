@@ -3,6 +3,7 @@ import {
   assertSingleReply,
   BLOCKED_REPLY,
   buildMessages,
+  CLOSED_REPLY,
   checkOutput,
   classifyImage,
   complete,
@@ -14,9 +15,11 @@ import {
   flagFromModel,
   HISTORY_LIMIT,
   isWindowOpen,
+  isWithinHours,
   listMedia,
   MEDIA_REPLY,
   mediaPath,
+  PAUSED_REPLY,
   prefilter,
   putMedia,
   removeMedia,
@@ -33,6 +36,17 @@ import {
 } from "@wa/shared";
 import type { Env } from "../env.js";
 import { downloadMedia, sendTemplate, sendText, type SendTarget } from "../meta.js";
+
+/** The runtime controls of docs/admin-panel.md §3, as they come off the org row. */
+interface OrgControls {
+  name: string;
+  sector: Sector;
+  ai_paused: boolean;
+  cap_micros: number | null;
+  hours_open_ist: string | null;
+  hours_close_ist: string | null;
+  out_of_hours: string;
+}
 
 /** DO alarms retry with backoff; cron does not. That is why debounce lives here. */
 export const DEBOUNCE_MS = 4_000;
@@ -458,6 +472,14 @@ export class ConversationDO extends DurableObject<Env> {
     const context = await this.#promptContext();
     if (!context) return;
 
+    // Paused by the owner, over the monthly cap, or outside business hours. All three
+    // are "a person answers this one", never silence — the customer is owed a reply
+    // whatever the reason we are not writing it with a model.
+    if (context.hold) {
+      await this.#sendAndHandoff(anchor, context.hold);
+      return;
+    }
+
     let completion;
     try {
       completion = await complete(
@@ -714,6 +736,8 @@ export class ConversationDO extends DurableObject<Env> {
     sector: Sector;
     kb: string;
     history: PromptTurn[];
+    /** The constant string to send instead of a model reply, or null to answer. */
+    hold: string | null;
   } | null> {
     const orgId = this.#get("org_id");
     const conversationId = this.#get("conversation_id");
@@ -721,9 +745,18 @@ export class ConversationDO extends DurableObject<Env> {
 
     const db = createOrgDb(this.env, orgId);
 
+    // The runtime controls ride on the org row the prompt already needs, so a paused
+    // client or one outside its hours costs no extra round trip.
     const { data: orgRow } = await db
-      .organization("name,sector")
-      .maybeSingle<{ name: string; sector: Sector }>();
+      .organization("name,sector,ai_paused,cap_micros,hours_open_ist,hours_close_ist,out_of_hours")
+      .maybeSingle<OrgControls>();
+
+    const hold = await this.#hold(db, orgRow);
+    // Nothing below is worth fetching if no model call is going to happen, and the KB
+    // of a paused client is the largest read on this path.
+    if (hold) {
+      return { businessName: "", sector: "general", kb: "", history: [], hold };
+    }
 
     const { data: docs } = await db
       .select("kb_documents", "raw", { limit: 5 })
@@ -741,7 +774,39 @@ export class ConversationDO extends DurableObject<Env> {
       // Oldest first for the model; the query is newest first so the limit takes the
       // recent end.
       history: (history ?? []).slice().reverse(),
+      hold: null,
     };
+  }
+
+  /**
+   * The runtime controls of docs/admin-panel.md §3, in the order they should win.
+   *
+   * A missing org row answers null — the controls must never be the reason a
+   * conversation goes quiet, and every one of them defaults to today's behaviour.
+   */
+  async #hold(db: OrgDb, org: OrgControls | null): Promise<string | null> {
+    if (!org) return null;
+
+    if (org.ai_paused) return PAUSED_REPLY;
+
+    if (org.out_of_hours === "handoff") {
+      if (!isWithinHours(new Date(), org.hours_open_ist, org.hours_close_ist)) {
+        return CLOSED_REPLY;
+      }
+    }
+
+    // Only a capped client pays for this, and no client is capped by default. The cap
+    // protects the shared wallet from one org (§8): at the ceiling the conversation
+    // goes to a person rather than stopping, so the client notices before the customer
+    // does.
+    // Loose on purpose: a column PostgREST did not return is as uncapped as a null one.
+    if (org.cap_micros != null) {
+      const { data, error } = await db.monthSpendMicros();
+      if (error) return null; // Never let a failed meter reading silence a client.
+      if (Number(data ?? 0) >= org.cap_micros) return PAUSED_REPLY;
+    }
+
+    return null;
   }
 
   async #sendTarget(): Promise<{

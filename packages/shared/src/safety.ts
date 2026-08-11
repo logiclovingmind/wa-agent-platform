@@ -35,6 +35,19 @@ export const BLOCKED_REPLY =
   "Let me get someone from the team to confirm that for you.";
 
 /**
+ * Sent when the owner has paused the AI, or when the org has spent its monthly cap.
+ * The same words for both on purpose: a customer must not be able to infer that this
+ * business has a billing ceiling, and either way the only true statement is that a
+ * person is handling it now.
+ */
+export const PAUSED_REPLY =
+  "Thanks for your message — someone from our team will reply here shortly.";
+
+/** Sent outside business hours, when the client chose handoff over an AI reply. */
+export const CLOSED_REPLY =
+  "Thanks for your message — we're closed at the moment. Someone from our team will reply as soon as we're back.";
+
+/**
  * Media is never *answered* by the model: answering from a caption alone is a guess, so
  * the turn goes to a person — and says so, rather than leaving the customer waiting on a
  * reply that never comes. An image is separately shown to the classifier below, but that

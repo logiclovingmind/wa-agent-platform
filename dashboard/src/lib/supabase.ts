@@ -66,6 +66,79 @@ export interface AdminOrg {
   last_message_at: string | null;
 }
 
+/**
+ * The half of a client's health that our own database can answer, from `admin_health`.
+ * The other half — token, subscription, quality rating — only Meta knows and arrives
+ * separately from the Worker, because reaching it needs a decrypted token.
+ */
+export interface AdminHealth {
+  org_id: string;
+  last_inbound_at: string | null;
+  last_outbound_at: string | null;
+  /** Meta rejected a send. Nothing else on this screen would show it. */
+  last_failed_at: string | null;
+  open_windows: number;
+  /** When the longest wait started, not how many are waiting. Null means nobody is. */
+  waiting_since: string | null;
+  open_flags_by_kind: Partial<Record<SafetyKind, number>>;
+  media_bytes: number;
+
+  // The runtime controls (admin-panel.md §3), on the same row as the health because
+  // half of them explain the other half: a client that is not replying because someone
+  // paused it is not a client that is broken.
+  ai_paused: boolean;
+  /** Null means uncapped, which is every client until one is given a ceiling. */
+  cap_micros: number | null;
+  month_spend_micros: number;
+  /** Null means the platform default: 12 months of text, 30 days of media. */
+  retention_months: number | null;
+  media_retention_days: number | null;
+  /** `HH:MM` in IST. Either one null means always open. */
+  hours_open_ist: string | null;
+  hours_close_ist: string | null;
+  out_of_hours: "reply" | "handoff";
+}
+
+/**
+ * One open flag in the cross-org queue, from the `admin_flags` RPC.
+ *
+ * Six fields, and the seventh is missing on purpose (admin-panel.md §5): there is no
+ * body here, no snippet, no customer name. `conversation_id` is an identifier so the
+ * client's own owner can find the thread under their own login — not a way in.
+ */
+export interface AdminFlag {
+  id: string;
+  org_id: string;
+  org_name: string;
+  conversation_id: string;
+  kind: SafetyKind;
+  detected_at: string;
+}
+
+/**
+ * An `audit_log` row. Read straight from PostgREST rather than through an RPC: this is
+ * the one client-scoped table whose policy has been `app.is_platform_admin()` since 0001,
+ * because the log exists to be read by us and by nobody else.
+ *
+ * `org_id` is nullable since 0015 — a granted admin flag belongs to no client.
+ */
+export interface AuditEntry {
+  id: string;
+  org_id: string | null;
+  actor_user_id: string | null;
+  action: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+/** A login and its role in one org, joined from `users` and `org_members`. */
+export interface OrgUser {
+  user_id: string;
+  email: string;
+  role: "owner" | "staff";
+  created_at: string;
+}
+
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
 
 export interface SafetyFlag {

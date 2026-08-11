@@ -39,7 +39,7 @@ const MEDIA_RETENTION_DAYS = 30;
  * free-tier.md: 1GB Storage. 800MB leaves room for a month of intake to land before
  * the next retention pass, so this fires with time to act rather than at the wall.
  */
-const STORAGE_ALARM_BYTES = 800 * 1024 * 1024;
+export const STORAGE_ALARM_BYTES = 800 * 1024 * 1024;
 
 export async function scheduled(
   controller: ScheduledController,
@@ -162,29 +162,99 @@ async function scrubFlaggedContent(env: Env): Promise<void> {
   if (error) throw new Error(`flagged content scrub failed: ${error.message}`);
 }
 
+type Sb = ReturnType<typeof createServiceClient>;
+
+interface Override {
+  id: string;
+  retention_months: number | null;
+  media_retention_days: number | null;
+}
+
+/**
+ * The clients who asked for something other than the platform default
+ * (admin-panel.md §3). Normally none, and while it is none both sweeps below stay
+ * exactly the single cross-org statement they have always been.
+ */
+async function retentionOverrides(sb: Sb): Promise<Override[]> {
+  const { data, error } = await sb
+    .from("organizations")
+    .select("id,retention_months,media_retention_days")
+    .or("retention_months.not.is.null,media_retention_days.not.is.null");
+  if (error) throw new Error(`retention override lookup failed: ${error.message}`);
+  return (data ?? []) as Override[];
+}
+
+/**
+ * Either one overriding client, or everyone except the overriding clients. Never both:
+ * the default pass excludes them and each override pass is one org.
+ */
+type Scope = { orgId: string; exclude?: never } | { exclude: string[]; orgId?: never };
+
+/**
+ * Narrows a query to that scope.
+ *
+ * `T` is deliberately unconstrained and the body casts. PostgREST's builder types are
+ * generated per column set and per chained filter, and constraining a generic to them
+ * makes the type checker recurse past its own depth limit (TS2589) — a compiler limit,
+ * not a design signal.
+ */
+interface Narrowable {
+  eq(column: string, value: string): unknown;
+  not(column: string, operator: string, value: string): unknown;
+}
+
+function scoped<T>(query: T, scope: Scope): T {
+  const q = query as Narrowable;
+  if (scope.orgId) return q.eq("org_id", scope.orgId) as T;
+  // PostgREST's `in` wants `(a,b,c)`.
+  if (scope.exclude && scope.exclude.length > 0) {
+    return q.not("org_id", "in", `(${scope.exclude.join(",")})`) as T;
+  }
+  return query;
+}
+
+function monthsAgo(months: number): string {
+  const cutoff = new Date();
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - months);
+  return cutoff.toISOString();
+}
+
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 /**
  * safety.md retention: auto-delete at 12 months. Full row delete — the scrub already
  * dropped flagged content, and safety_flags/audit_log outlive messages on their own
  * clocks. Cross-org like sweepDedupe: one DELETE beats one round trip per client.
+ *
+ * A client with its own `retention_months` is cut out of that DELETE and swept on its
+ * own clock instead. One extra round trip per overriding client is the right price for
+ * a control nobody else has to pay for.
  */
 async function deleteExpired(env: Env): Promise<void> {
-  const cutoff = new Date();
-  cutoff.setUTCMonth(cutoff.getUTCMonth() - RETENTION_MONTHS);
   const sb = createServiceClient(env);
+  const overrides = (await retentionOverrides(sb)).filter((o) => o.retention_months !== null);
 
+  await purge(env, sb, monthsAgo(RETENTION_MONTHS), { exclude: overrides.map((o) => o.id) });
+  for (const org of overrides) {
+    await purge(env, sb, monthsAgo(org.retention_months as number), { orgId: org.id });
+  }
+}
+
+async function purge(env: Env, sb: Sb, cutoff: string, scope: Scope): Promise<void> {
   // Objects first, then the rows — same reason as the scrub above.
-  const keys = await sb
-    .from("messages")
-    .select("media_key")
-    .lt("created_at", cutoff.toISOString())
-    .not("media_key", "is", null);
+  const keys = await scoped(
+    sb.from("messages").select("media_key").lt("created_at", cutoff).not("media_key", "is", null),
+    scope,
+  );
   if (keys.error) throw new Error(`expired media lookup failed: ${keys.error.message}`);
   await removeMedia(env, keys.data.map((row) => row.media_key as string));
 
-  const { error } = await sb
-    .from("messages")
-    .delete()
-    .lt("created_at", cutoff.toISOString());
+  const { error } = await scoped(
+    sb.from("messages").delete().lt("created_at", cutoff),
+    scope,
+  );
   if (error) throw new Error(`retention delete failed: ${error.message}`);
 }
 
@@ -193,29 +263,38 @@ async function deleteExpired(env: Env): Promise<void> {
  * its timestamps and its caption survive — only the bytes go, because the bytes are the
  * only part that competes for a 1GB bucket shared by every client.
  *
- * Cross-org like the sweeps above, and idempotent: the not-null guard skips rows whose
- * media has already gone.
+ * Cross-org like the sweeps above, idempotent (the not-null guard skips rows whose
+ * media has already gone), and per-client only for clients who overrode the default.
  */
 async function scrubExpiredMedia(env: Env): Promise<void> {
-  const cutoff = new Date(Date.now() - MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const sb = createServiceClient(env);
+  const overrides = (await retentionOverrides(sb)).filter((o) => o.media_retention_days !== null);
 
-  const keys = await sb
-    .from("messages")
-    .select("media_key")
-    .lt("created_at", cutoff)
-    .not("media_key", "is", null);
+  await dropMedia(env, sb, daysAgo(MEDIA_RETENTION_DAYS), { exclude: overrides.map((o) => o.id) });
+  for (const org of overrides) {
+    await dropMedia(env, sb, daysAgo(org.media_retention_days as number), { orgId: org.id });
+  }
+}
+
+async function dropMedia(env: Env, sb: Sb, cutoff: string, scope: Scope): Promise<void> {
+  const keys = await scoped(
+    sb.from("messages").select("media_key").lt("created_at", cutoff).not("media_key", "is", null),
+    scope,
+  );
   if (keys.error) throw new Error(`expired media lookup failed: ${keys.error.message}`);
   if (keys.data.length === 0) return;
 
   // Objects first, then the rows — same reason as the scrub above.
   await removeMedia(env, keys.data.map((row) => row.media_key as string));
 
-  const { error } = await sb
-    .from("messages")
-    .update({ media_key: null })
-    .lt("created_at", cutoff)
-    .not("media_key", "is", null);
+  const { error } = await scoped(
+    sb
+      .from("messages")
+      .update({ media_key: null })
+      .lt("created_at", cutoff)
+      .not("media_key", "is", null),
+    scope,
+  );
   if (error) throw new Error(`media retention update failed: ${error.message}`);
 }
 

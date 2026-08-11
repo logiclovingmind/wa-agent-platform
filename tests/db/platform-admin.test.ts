@@ -83,6 +83,109 @@ describe("platform admin", () => {
     }
   });
 
+  it("refuses admin_health to an ordinary owner", async () => {
+    await expect(
+      asUser(db, fx.userA, () => db.query("select * from public.admin_health()")),
+    ).rejects.toThrow(/admin only/);
+  });
+
+  // The health rollup answers "is this client working", which means it has to be able to
+  // report on rows the caller cannot read — the same definer trick as admin_orgs, and
+  // the same reason it needs its own guard.
+  it("reports per-client health without exposing message content", async () => {
+    await db.query("begin");
+    try {
+      await db.query(
+        `insert into messages (org_id, conversation_id, wa_message_id, direction, body, status, status_at)
+         values ($1, $2, 'wamid.alpha.failed', 'outbound', 'never arrived', 'failed', now())`,
+        [fx.orgA, fx.convA],
+      );
+      await db.query(
+        "insert into safety_flags (org_id, conversation_id, kind) values ($1, $2, 'minor')",
+        [fx.orgA, fx.convA],
+      );
+      await db.query(
+        "update conversations set handoff_state = 'requested' where id = $1",
+        [fx.convA],
+      );
+
+      await db.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: admin, role: "authenticated" }),
+      ]);
+      await db.query("set local role authenticated");
+
+      const rows = (
+        await db.query<{
+          org_id: string;
+          last_inbound_at: Date | null;
+          last_failed_at: Date | null;
+          waiting_since: Date | null;
+          open_flags_by_kind: Record<string, number>;
+          media_bytes: string;
+        }>("select * from public.admin_health()")
+      ).rows;
+
+      const a = rows.find((r) => r.org_id === fx.orgA)!;
+      expect(a.last_inbound_at).not.toBeNull();
+      expect(a.last_failed_at).not.toBeNull();
+      expect(a.waiting_since).not.toBeNull();
+      expect(a.open_flags_by_kind).toEqual({ minor: 1 });
+      // No `storage` schema on a plain local cluster, so this is the deferred-reference
+      // path in the function rather than a real total.
+      expect(a.media_bytes).toBe("0");
+
+      // Kinds and counts, never a body. The admin holds no membership precisely so that
+      // "we cannot read your customers' messages" survives features like this one.
+      expect(JSON.stringify(rows)).not.toContain("never arrived");
+
+      const b = rows.find((r) => r.org_id === fx.orgB)!;
+      expect(b.last_failed_at).toBeNull();
+      expect(b.open_flags_by_kind).toEqual({});
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
+  it("refuses admin_flags to an ordinary owner", async () => {
+    await expect(
+      asUser(db, fx.userA, () => db.query("select * from public.admin_flags()")),
+    ).rejects.toThrow(/admin only/);
+  });
+
+  // The queue crosses every client, which is the only way a distress flag raised at 2am
+  // for a client whose owner is asleep gets seen at all. What crosses with it is the kind
+  // and the clock, and nothing a customer wrote.
+  it("queues open flags across clients, resolved ones not at all", async () => {
+    await db.query("begin");
+    try {
+      await db.query(
+        `insert into messages (org_id, conversation_id, wa_message_id, direction, body)
+         values ($1, $2, 'wamid.alpha.flagged', 'inbound', 'i want to hurt myself')`,
+        [fx.orgA, fx.convA],
+      );
+      await db.query(
+        "insert into safety_flags (org_id, conversation_id, kind) values ($1, $2, 'distress')",
+        [fx.orgA, fx.convA],
+      );
+      // Already dealt with, so no longer the queue's problem.
+      await db.query(
+        `insert into safety_flags (org_id, conversation_id, kind, resolved_at, resolution_note)
+         values ($1, $2, 'abuse', now(), 'blocked the number')`,
+        [fx.orgB, fx.convB],
+      );
+
+      const rows = await asUser(db, admin, async () =>
+        (await db.query<{ org_id: string; kind: string }>("select * from public.admin_flags()"))
+          .rows,
+      );
+
+      expect(rows.map((r) => [r.org_id, r.kind])).toEqual([[fx.orgA, "distress"]]);
+      expect(JSON.stringify(rows)).not.toContain("hurt myself");
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   // Where the line falls for the management panel: an admin may see that an org exists
   // and who its people are, because onboarding and support need exactly that, and may
   // not see what those people's customers said.

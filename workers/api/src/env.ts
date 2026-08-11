@@ -9,7 +9,10 @@ export interface Env {
   /** One token for all clients. Per-client secrecy comes from the random slug. */
   META_VERIFY_TOKEN: string;
 
-  /** Exact origin of the dashboard. One origin, never a wildcard. */
+  /**
+   * Exact dashboard origins, comma-separated. Never a wildcard: `app.` and `admin.` are
+   * one Pages bundle on two hostnames, and both have to be allowed by name.
+   */
   DASHBOARD_ORIGIN: string;
 
   /** Graph API base including the version, e.g. https://graph.facebook.com/v21.0 */

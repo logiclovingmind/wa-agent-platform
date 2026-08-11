@@ -66,18 +66,26 @@ cross join (values
 -- detector actually looked, and it is stored rather than inferred because an image whose
 -- classification failed is exactly as unscreened as a voice note. Text is always
 -- screened by the regex prefilter; audio never is; images are, unless the call failed.
-insert into messages (org_id, conversation_id, wa_message_id, direction, body, type, media_key, safety_screened, status, created_at)
+insert into messages (org_id, conversation_id, wa_message_id, direction, body, type, media_key, safety_screened, status, status_at, created_at)
 select c.org_id, c.id, 'demo-' || c.customer_wa_id || '-' || m.seq, m.dir::message_direction,
        m.body, m.type,
        case
          when m.stored then c.org_id || '/' || c.id || '/demo-' || c.customer_wa_id || '-' || m.seq
        end,
-       m.screened, m.status, now() - m.age
+       m.screened, m.status,
+       -- The status webhook writes both columns together (webhook.ts), and the admin
+       -- panel reads the timestamp, not the word: a client whose sends started failing
+       -- an hour ago looks perfectly healthy by every other measure on that screen.
+       case when m.status is not null then now() - m.age end,
+       now() - m.age
 from conversations c
 join (values
   ('919990010001', 1, 'inbound',  'Is the Saturday batch still open?',                     'text',  false, true,  null,   interval '8 minutes'),
   ('919990010001', 2, 'outbound', 'Yes, a few seats are left. Shall I hold one for you?',  'text',  false, true,  'read', interval '6 minutes'),
   ('919990010002', 1, 'inbound',  'Sorry, I got busy — can we talk tomorrow?',             'text',  false, true,  null,   interval '2 hours'),
+  -- The one send Meta refused. Nothing else on the admin screen can show this: the reply
+  -- exists, the conversation looks answered, and the customer received nothing.
+  ('919990010002', 2, 'outbound', 'No problem at all — shall I check back with you tomorrow morning?', 'text', false, true, 'failed', interval '119 minutes'),
   ('919990010003', 1, 'inbound',  'I would rather speak to someone, please.',              'text',  false, true,  null,   interval '4 minutes'),
   ('919990010003', 2, 'outbound', 'Of course — someone from our team will reply shortly.', 'text',  false, true,  'read', interval '3 minutes'),
   ('919990010004', 1, 'inbound',  'hi i am 14, can i join the coding class?',              'text',  false, true,  null,   interval '2 minutes'),
@@ -265,6 +273,32 @@ cross join (values
   (24, 'Done — a seat is held for you for the batch starting on the 6th. Someone from our team will confirm by tomorrow.')
 ) as t(seq, body)
 where c.customer_wa_id = '919990030001';
+
+-- ---------------------------------------------------------------------------
+-- Runtime controls, in their resting state
+-- ---------------------------------------------------------------------------
+--
+-- Business hours only. `out_of_hours = 'reply'` means the hours change nothing yet, so
+-- these two fields are the safe half of the controls panel: they render populated
+-- instead of blank, and the AI keeps answering at 2am the way it does today.
+--
+-- The other three are deliberately left at the platform default. `ai_paused = true`
+-- would silence every demo conversation above, a `cap_micros` under the month's spend
+-- would do the same, and a retention override would pull this org out of the single
+-- cross-org sweep for no reason. All three are one click in the panel when you want to
+-- show them:
+--
+--   Pause/Resume       — flips ai_paused, red badge on the row, AI hands off instantly
+--   Cap below spend    — the row goes red: "monthly spend cap reached"
+--   Out of hours       — set to 'handoff' with hours that exclude now
+--
+-- Each of those writes an audit_log row, which is the point of the demo as much as the
+-- behaviour is.
+update organizations
+set hours_open_ist = '09:30',
+    hours_close_ist = '19:00',
+    out_of_hours = 'reply'
+where id = (select org_id from wa_accounts order by created_at limit 1);
 
 commit;
 

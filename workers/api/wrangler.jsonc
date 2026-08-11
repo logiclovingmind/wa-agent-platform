@@ -37,11 +37,13 @@
 
   "vars": {
     "SUPABASE_URL": "https://gtouimwbjfuzgotdqqan.supabase.co",
-    // Exactly one origin, and it has to be the one the browser actually shows. When the
-    // dashboard moves to a custom domain this must move with it: reads go straight to
-    // Supabase and keep working, so a stale value here breaks only takeover, erase and
-    // export — which reads as three broken features rather than one wrong string.
-    "DASHBOARD_ORIGIN": "https://wa-agent-dashboard.pages.dev",
+    // Comma-separated, and every entry has to be an origin the browser actually shows.
+    // `app.` and `admin.` are one Pages bundle on two custom domains; the pages.dev
+    // origin stays because it is what the deploy prints and what still answers while DNS
+    // is being moved. Reads go straight to Supabase and keep working, so a stale value
+    // here breaks only takeover, erase and export — which reads as three broken features
+    // rather than one wrong string.
+    "DASHBOARD_ORIGIN": "https://wa-agent-dashboard.pages.dev,https://app.logiclovingmind.com,https://admin.logiclovingmind.com",
     "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
     // An aggregator, not OpenAI directly — it bills in INR and takes no card, which is
     // the whole reason it is here. OpenAI-compatible: /chat/completions and

@@ -1,8 +1,10 @@
 import { env, runDurableObjectAlarm } from "cloudflare:test";
 import {
   BLOCKED_REPLY,
+  CLOSED_REPLY,
   FALLBACK_REPLY,
   MEDIA_REPLY,
+  PAUSED_REPLY,
   SAFE_REPLY,
   VIDEO_REPLY,
   type ImageFlags,
@@ -31,6 +33,16 @@ interface Scenario {
   imageFlags?: Partial<ImageFlags>;
   /** The classifier alone is unreachable; the reply model still answers. */
   classifierDown?: boolean;
+  /** The runtime controls of admin-panel.md §3, as they sit on the org row. */
+  controls?: {
+    ai_paused?: boolean;
+    cap_micros?: number | null;
+    hours_open_ist?: string | null;
+    hours_close_ist?: string | null;
+    out_of_hours?: "reply" | "handoff";
+  };
+  /** What org_month_spend() reports, for the cap check. */
+  monthSpendMicros?: number;
 }
 
 interface Harness {
@@ -52,7 +64,20 @@ async function harness(name: string, scenario: Scenario = {}) {
         case "conversations":
           return [{ id: CONVERSATION }];
         case "organizations":
-          return [{ name: "Acme Salon", sector: scenario.sector ?? "general" }];
+          return [
+            {
+              name: "Acme Salon",
+              sector: scenario.sector ?? "general",
+              ai_paused: false,
+              cap_micros: null,
+              hours_open_ist: null,
+              hours_close_ist: null,
+              out_of_hours: "reply",
+              ...scenario.controls,
+            },
+          ];
+        case "rpc/org_month_spend":
+          return scenario.monthSpendMicros ?? 0;
         case "kb_documents":
           return [{ raw: "Haircut is Rs 400. Open 9am to 8pm." }];
         case "wa_accounts":
@@ -464,5 +489,92 @@ describe("image safety classification", () => {
 
     expect(h.sent).toEqual([SAFE_REPLY.self_harm]);
     expect(h.classified).toEqual([]);
+  });
+});
+
+/**
+ * The runtime controls (admin-panel.md §3). All three share one rule: the AI stops and a
+ * person takes over. None of them may produce silence — a customer who wrote to a
+ * business is owed an answer whatever the reason we are not writing it with a model.
+ */
+describe("runtime controls", () => {
+  it("hands off instead of replying while the AI is paused", async () => {
+    const h = await harness("control-paused", { controls: { ai_paused: true } });
+    await h.conv.onInbound(inbound("wamid.p1", "do you have a slot"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([PAUSED_REPLY]);
+    // The point of the kill switch: no model call at all, so nothing it might have said
+    // can reach the customer.
+    expect(h.llm).toEqual([]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("does not read the KB of a paused client", async () => {
+    const h = await harness("control-paused-reads", { controls: { ai_paused: true } });
+    await h.conv.onInbound(inbound("wamid.p2", "hi"));
+    await flush(h.conv);
+
+    // The prompt context is the largest read on this path, and none of it is needed once
+    // the answer is a constant string.
+    expect(h.rest.some((c) => c.table.startsWith("kb_documents"))).toBe(false);
+  });
+
+  it("hands off at the monthly spend cap", async () => {
+    const h = await harness("control-capped", {
+      controls: { cap_micros: 5_000_000 },
+      monthSpendMicros: 5_000_000,
+    });
+    await h.conv.onInbound(inbound("wamid.p3", "how much for a haircut"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([PAUSED_REPLY]);
+    expect(h.llm).toEqual([]);
+  });
+
+  it("still replies below the cap", async () => {
+    const h = await harness("control-under-cap", {
+      controls: { cap_micros: 5_000_000 },
+      monthSpendMicros: 4_999_999,
+    });
+    await h.conv.onInbound(inbound("wamid.p4", "how much for a haircut"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual(["Sure, 6pm works. See you then."]);
+  });
+
+  it("does not meter an uncapped client", async () => {
+    const h = await harness("control-uncapped");
+    await h.conv.onInbound(inbound("wamid.p5", "hi"));
+    await flush(h.conv);
+
+    // Nobody is capped by default, and the control must cost those clients nothing.
+    expect(h.rest.some((c) => c.table.startsWith("rpc/org_month_spend"))).toBe(false);
+  });
+
+  it("says the business is closed when the client asked for that", async () => {
+    // 00:00–00:01 IST: shut for all but one minute of the day, whenever this runs.
+    const h = await harness("control-closed", {
+      controls: {
+        hours_open_ist: "00:00",
+        hours_close_ist: "00:01",
+        out_of_hours: "handoff",
+      },
+    });
+    await h.conv.onInbound(inbound("wamid.p6", "are you open"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([CLOSED_REPLY]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("ignores hours when the client chose to keep replying", async () => {
+    const h = await harness("control-hours-reply", {
+      controls: { hours_open_ist: "00:00", hours_close_ist: "00:01", out_of_hours: "reply" },
+    });
+    await h.conv.onInbound(inbound("wamid.p7", "are you open"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual(["Sure, 6pm works. See you then."]);
   });
 });

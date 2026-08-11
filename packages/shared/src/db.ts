@@ -56,6 +56,17 @@ export class OrgDb {
     return this.sb.from("organizations").select(columns).eq("id", this.orgId).limit(1);
   }
 
+  /**
+   * Month-to-date spend in micros of INR, for the per-org cap (admin-panel.md §3).
+   *
+   * A named accessor rather than a bare `sb.rpc(...)` for the same reason
+   * organization() exists: it is a query that must carry this org's id, and there
+   * should be no code path where that id can be left off or be somebody else's.
+   */
+  monthSpendMicros() {
+    return this.sb.rpc("org_month_spend", { p_org_id: this.orgId });
+  }
+
   insert<T extends Record<string, unknown>>(table: OrgScopedTable, rows: T | T[]) {
     const list = Array.isArray(rows) ? rows : [rows];
     return this.sb.from(table).insert(list.map((row) => this.#stamp(table, row)));

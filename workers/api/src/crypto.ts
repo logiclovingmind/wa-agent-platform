@@ -2,7 +2,11 @@ import type { Env } from "./env.js";
 
 // Imported CryptoKeys are cached for the life of the isolate. importKey is not free
 // and this runs on every inbound webhook.
-const masterKeys = new Map<number, CryptoKey>();
+//
+// Keyed by version *and* usage: the webhook path imports decrypt-only, and onboarding
+// imports encrypt-only. Same bytes either way, but a key that cannot encrypt is one
+// fewer thing the hot path can be made to do.
+const masterKeys = new Map<string, CryptoKey>();
 
 function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -22,8 +26,12 @@ function hexToBytes(hex: string): Uint8Array | null {
   return out;
 }
 
-async function masterKey(env: Env, version: number): Promise<CryptoKey> {
-  const cached = masterKeys.get(version);
+async function masterKey(
+  env: Env,
+  version: number,
+  usage: "encrypt" | "decrypt",
+): Promise<CryptoKey> {
+  const cached = masterKeys.get(`${version}:${usage}`);
   if (cached) return cached;
 
   const raw = env[`MASTER_KEY_V${version}`];
@@ -33,11 +41,56 @@ async function masterKey(env: Env, version: number): Promise<CryptoKey> {
     throw new Error(`MASTER_KEY_V${version} is not set`);
   }
 
-  const key = await crypto.subtle.importKey("raw", base64ToBytes(raw), "AES-GCM", false, [
-    "decrypt",
-  ]);
-  masterKeys.set(version, key);
+  const key = await crypto.subtle.importKey("raw", base64ToBytes(raw), "AES-GCM", false, [usage]);
+  masterKeys.set(`${version}:${usage}`, key);
   return key;
+}
+
+/**
+ * The version a *new* secret is sealed under: the highest `MASTER_KEY_V*` that is set.
+ *
+ * Rotation is additive, so during a rotation both V1 and V2 exist and a client onboarded
+ * mid-rotation must land on V2 — sealing it under V1 would make it a row that the
+ * rotation has already passed over, and V1 is about to be deleted.
+ */
+export function currentKeyVersion(env: Env): number {
+  const versions = Object.keys(env)
+    .map((k) => /^MASTER_KEY_V(\d+)$/.exec(k)?.[1])
+    .filter((v): v is string => v !== undefined)
+    .map(Number);
+  if (versions.length === 0) throw new Error("no MASTER_KEY_V* is set");
+  return Math.max(...versions);
+}
+
+/**
+ * Seals a Meta token or app secret for storage in `wa_accounts`.
+ *
+ * The counterpart to decryptSecret, and the only thing in the Worker that can produce
+ * ciphertext. Until now `scripts/rotate-key.ts` was the only way, offline and by hand —
+ * see docs/admin-panel.md §4 on why this is the most dangerous surface in the panel.
+ *
+ * A fresh 12-byte IV per call, never reused. AES-GCM with a repeated IV under the same
+ * key does not merely weaken the ciphertext, it leaks the key stream.
+ */
+export async function encryptSecret(
+  env: Env,
+  plaintext: string,
+  keyVersion: number,
+): Promise<{ ciphertext: string; iv: string }> {
+  const key = await masterKey(env, keyVersion, "encrypt");
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  return { ciphertext: bytesToBase64(new Uint8Array(sealed)), iv: bytesToBase64(iv) };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 /** Decrypts a Meta token or app secret held in wa_accounts. */
@@ -47,7 +100,7 @@ export async function decryptSecret(
   ivB64: string,
   keyVersion: number,
 ): Promise<string> {
-  const key = await masterKey(env, keyVersion);
+  const key = await masterKey(env, keyVersion, "decrypt");
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: base64ToBytes(ivB64) },
     key,

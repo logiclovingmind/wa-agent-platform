@@ -76,6 +76,40 @@ describe("scheduled", () => {
     expect(calls.some((c) => c.method === "DELETE" && c.table === "messages")).toBe(true);
   });
 
+  // The columns from migration 0015 are worse than useless if the sweep ignores them:
+  // the panel would promise a client 24 months and the cron would still delete at 12.
+  it("sweeps an overriding client on its own clock", async () => {
+    const slow = "22222222-2222-2222-2222-222222222222";
+    const calls = stubSupabase((call) =>
+      call.method === "GET" && call.table.startsWith("organizations")
+        ? [{ id: slow, retention_months: 24, media_retention_days: null }]
+        : [],
+    );
+    await fire("0 21 * * *");
+
+    const deletes = calls.filter((c) => c.method === "DELETE" && c.table === "messages");
+    expect(deletes).toHaveLength(2);
+
+    // The default pass must leave the overriding client alone, or the override is a lie.
+    const [dflt, own] = deletes;
+    expect(dflt?.url.searchParams.get("org_id")).toBe(`not.in.(${slow})`);
+    expect(own?.url.searchParams.get("org_id")).toBe(`eq.${slow}`);
+
+    // 24 months, not 12: the two cutoffs must differ or the override changed nothing.
+    expect(own?.url.searchParams.get("created_at")).not.toBe(
+      dflt?.url.searchParams.get("created_at"),
+    );
+  });
+
+  it("stays one cross-org statement when nobody has an override", async () => {
+    const calls = stub();
+    await fire("0 21 * * *");
+
+    const deletes = calls.filter((c) => c.method === "DELETE" && c.table === "messages");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]?.url.searchParams.get("org_id")).toBe(null);
+  });
+
   it("does nothing for a cron with no handler", async () => {
     const calls = stub();
     await fire("0 5 * * *");
