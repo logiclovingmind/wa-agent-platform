@@ -126,8 +126,48 @@ Then, in this order, because each one exercises a different half:
 2. Sign in to the dashboard — proves the publishable key and the rebuild.
 
 Only once both pass: **API Keys → Legacy anon, service_role API keys → Disable
-JWT-based API keys.** That is the step that actually retires the old credential; until
-you press it the leaked key is still live. Do not press it on faith.
+JWT-based API keys.**
+
+⚠️ **That button is not sufficient, and it reports success anyway.** It stops the API
+gateway accepting the legacy keys, so Auth answers 401 and PostgREST answers
+`Legacy API keys are disabled` — but **Storage keeps working**, because storage-api
+validates the signature against the legacy JWT secret rather than consulting the key
+list. Measured on 2026-08-12: with the pair "disabled", the legacy `service_role` key
+still listed a client's media prefix out of the private bucket. Media is the one place
+customer photos live, so this is the worst surface to leave open.
+
+Killing it takes a second, separate step on **JWT Keys**:
+
+1. **JWT Signing Keys → Create Standby Key** (asymmetric), if there isn't one.
+2. **Rotate keys.** The legacy HS256 secret moves to *Previously used*. Nothing is
+   revoked yet.
+3. **Revoke** the legacy secret under *Previously used*. This is the step that
+   invalidates every token it ever signed, `service_role` included, in Storage too.
+
+Supabase advises waiting access-token-expiry + ~15 min before step 3 so live sessions
+aren't cut off. With no clients on the platform the only session is ours, so revoke
+immediately — a live leaked key outranks a re-login.
+
+Safe for us because nothing here verifies a JWT locally: `workers/api/src/auth.ts`
+hands the token to `/auth/v1/user`, and there are no Edge Functions. A project that
+verified tokens itself with `jose`/`jsonwebtoken` would break at step 2.
+
+**Verify, don't assume.** The check that caught this, re-run after revoking — it must
+fail:
+
+```bash
+printf 'legacy service_role key: '; read -rs SR; echo
+curl -s -X POST \
+  "$SUPABASE_URL/storage/v1/object/list/media" \
+  -H "apikey: $SR" -H "authorization: Bearer $SR" \
+  -H "content-type: application/json" -d '{"prefix":"","limit":5}'
+unset SR
+```
+
+A JSON array means the key is still live. Note that an unauthenticated request returns
+`NoSuchBucket` while an authenticated-but-unauthorised one returns `NoSuchKey` — so on
+single-object probes the error *shape*, not the status code, is what tells you whether
+the key was accepted.
 
 ### Session signing keys are a different rotation
 
