@@ -610,15 +610,16 @@ describe("onboarding and offboarding", () => {
     expect(audit?.body).toMatchObject({ org_id: null, action: "org_offboarded" });
   });
 
-  // §9: `app.` and `admin.` are one bundle on two hostnames, so both are named origins.
-  // A method missing from the preflight fails before the handler runs, which reads as a
-  // broken route rather than a wrong CORS policy — and the panel uses PATCH and DELETE.
-  it("clears the preflight for both hostnames and every method the panel uses", async () => {
+  // The custom domain and the pages.dev origin are both named, because the second is
+  // what a deploy prints and what still answers if DNS is in flight. A method missing
+  // from the preflight fails before the handler runs, which reads as a broken route
+  // rather than a wrong CORS policy — and the panel uses PATCH and DELETE throughout.
+  it("clears the preflight for both origins and every method the panel uses", async () => {
     await harness({ admin: true });
 
     for (const origin of [
-      "https://admin.logiclovingmind.com",
       "https://app.logiclovingmind.com",
+      "https://wa-agent-dashboard.pages.dev",
     ]) {
       for (const method of ["PATCH", "DELETE"]) {
         const ctx = createExecutionContext();

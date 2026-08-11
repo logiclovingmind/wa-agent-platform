@@ -120,23 +120,29 @@ migrated or deployed live.
   `autoComplete="new-password"`, and the form is cleared the moment the Worker has them.
   Nothing reads them back: `wa_accounts` denies select to every browser login.
 
-**Session 20 also built step 5 of §7 — the `app.` / `admin.` split (§9).** The code half
-only; the DNS and Pages halves are by hand and are listed below.
+**Session 20 built step 5 of §7, then the user reversed the design behind it.** §9's two
+hostnames are now **one**: `app.logiclovingmind.com`. Asked what two domains bought, the
+honest answer was "presentation, no security" — and the user's reply was *"then one
+domain is alright .. i want security"*. The `shellFor()` hostname switch is deleted;
+role decides the shell, as it did before. What survives from the step is the part that
+was load-bearing:
 
-- `DASHBOARD_ORIGIN` is now comma-separated and `cors` takes the list. The pages.dev
-  origin stays in it: it is what the deploy prints, and it still answers while DNS moves.
+- `DASHBOARD_ORIGIN` is comma-separated and `cors` takes the list. Two entries now: the
+  custom domain and pages.dev, which is what a deploy prints and what still answers if
+  DNS is ever in flight.
 - ⚠️ **`allowMethods` was missing `PATCH` and `DELETE`** — a real bug, not a §9 cost.
   Steps 3 and 4 added routes on both, and every one of them would have failed at the
   preflight against the live origin while working perfectly in `wrangler dev`. Fixed, and
-  a test now walks both hostnames against both methods.
-- `shellFor(location.hostname)` in `App.tsx`. `admin.` renders the platform console,
-  `app.` renders the client shell, anything else (localhost, pages.dev) keeps deciding by
-  role. Signing in at the wrong one gives the other hostname as a link, not an empty
-  screen.
-- **Still to do by hand, in this order:** two CNAMEs on Hostinger (`app`, `admin` →
-  `wa-agent-dashboard.pages.dev`, apex untouched), then both as custom domains on the
-  existing Pages project — `wrangler` has no `pages domain` command, so that is the
-  Cloudflare dashboard — then `pnpm deploy:api` to ship the widened origin list.
+  a test now walks both origins against both methods. **This bug is the whole return on
+  step 5** — the split that surfaced it is gone, the fix is not.
+- ⚠️ Deleting `shellFor()` also removed a trap. It switched on the `app.` and `admin.`
+  prefixes, so a *single* domain named `app.` would have bounced the platform admin to
+  `admin.logiclovingmind.com`, which was never going to exist. A hostname switch is only
+  safe while every hostname it names is real.
+- **Still to do by hand:** one CNAME on Hostinger (`app` → `wa-agent-dashboard.pages.dev`,
+  apex untouched — it is the Vercel website), then the same hostname as a custom domain
+  on the existing Pages project. `wrangler` has no `pages domain` command, so that part is
+  the Cloudflare dashboard.
 
 All five steps of §7 are built locally. Nothing is committed, migrated or deployed.
 
@@ -332,7 +338,13 @@ worth building until a client asks.
 
 ---
 
-## 9. Decision: `app.` for clients, `admin.` for us
+## 9. Decision: `app.` for clients, `admin.` for us — REVERSED, one domain
+
+**Superseded. Built in session 20, then reversed by the user in the same session: the
+dashboard is on `app.logiclovingmind.com` alone and the shell is chosen by role.** The
+question that killed it was the right one — *"both have the same target, so what is the
+benefit?"* — and the honest answer was presentation, not security. Everything below is
+kept because the DNS facts are still accurate and the ⚠️ at the end is still the point.
 
 **Yes, both are possible, and it is worth doing.**
 

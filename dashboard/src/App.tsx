@@ -7,24 +7,6 @@ import Inbox from "./Inbox";
 import Usage from "./Usage";
 import Admin from "./Admin";
 
-/**
- * `admin.` and `app.` are one Pages bundle on two hostnames (admin-panel.md §9). The
- * hostname picks the shell, so clients never see an admin URL and an admin never lands
- * on an inbox that is empty for a reason nobody could guess by looking at it.
- *
- * ⚠️ UX, not a boundary. The boundary is RLS and the missing `org_members` row. Anyone
- * can edit a hostname; nobody can edit their way past Postgres.
- */
-function shellFor(hostname: string): "admin" | "client" | "either" {
-  if (hostname.startsWith("admin.")) return "admin";
-  if (hostname.startsWith("app.")) return "client";
-  // localhost and the bare pages.dev origin, where there is no hostname to read: fall
-  // back to deciding by role, which is what happened everywhere before the split.
-  return "either";
-}
-
-const SHELL = shellFor(window.location.hostname);
-
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
@@ -85,12 +67,7 @@ export default function App() {
    * every client table — dropping the tabs here just stops it landing on an inbox that
    * is empty for a reason no one could guess from looking at it.
    */
-  // Signed in at the wrong hostname. Their account is fine, so say which door to use
-  // rather than showing a screen that renders empty and looks broken.
-  if (SHELL === "admin" && !isPlatformAdmin) return <WrongDoor to="app" />;
-  if (SHELL === "client" && !isMember) return <WrongDoor to="admin" />;
-
-  const adminOnly = SHELL === "admin" || (SHELL === "either" && isPlatformAdmin && !isMember);
+  const adminOnly = isPlatformAdmin && !isMember;
   if (adminOnly) {
     return (
       <div className="flex h-screen flex-col">
@@ -159,26 +136,6 @@ export default function App() {
           <Inbox isOwner={isOwner} />
         )}
       </div>
-    </div>
-  );
-}
-
-/** The other hostname, same bundle: only the first label changes. */
-function WrongDoor({ to }: { to: "app" | "admin" }) {
-  const url = `https://${to}.${window.location.hostname.split(".").slice(1).join(".")}`;
-  return (
-    <div className="flex h-screen flex-col items-center justify-center gap-3 p-8 text-sm">
-      <p className="text-muted-foreground">
-        {to === "app"
-          ? "This is the platform console. Your dashboard is at:"
-          : "This account has no client inbox. The platform console is at:"}
-      </p>
-      <a href={url} className="font-mono underline">
-        {url}
-      </a>
-      <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
-        Sign out
-      </Button>
     </div>
   );
 }
