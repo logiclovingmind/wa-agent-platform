@@ -27,10 +27,33 @@ export interface Conversation {
   window_expires_at: string | null;
 }
 
+export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
+
+export interface SafetyFlag {
+  conversation_id: string;
+  kind: SafetyKind;
+  detected_at: string;
+}
+
+export const SAFETY_LABEL: Record<SafetyKind, string> = {
+  minor: "Minor",
+  distress: "Distress",
+  self_harm: "Self-harm",
+  abuse: "Abuse",
+};
+
 export interface Message {
   id: string;
   direction: "inbound" | "outbound";
+  /** For an attachment this is the caption, which is often null. */
   body: string | null;
+  /** Meta's message type: `text`, `image`, `audio`, `video`, `document`, `sticker`. */
+  type: string;
+  /**
+   * Path in the private `media` bucket, or null. Null on an attachment is normal and
+   * not an error: video is never stored, and retention drops the bytes at 30 days.
+   */
+  media_key: string | null;
   created_at: string;
   status: string | null;
 }
