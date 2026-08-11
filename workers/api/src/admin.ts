@@ -1,5 +1,17 @@
 import { Hono } from "hono";
-import { createOrgDb, createServiceClient, listMedia, removeMedia } from "@wa/shared";
+import {
+  costMicros,
+  createOrgDb,
+  createServiceClient,
+  decideReply,
+  HISTORY_LIMIT,
+  HOLD_TEXT,
+  holdFor,
+  listMedia,
+  removeMedia,
+  type OrgControls,
+  type PromptTurn,
+} from "@wa/shared";
 import { currentKeyVersion, decryptSecret, encryptSecret } from "./crypto.js";
 import { STORAGE_ALARM_BYTES } from "./cron.js";
 import type { Caller } from "./auth.js";
@@ -222,6 +234,11 @@ const CONTROLS = {
   hours_open_ist: timeOrNull,
   hours_close_ist: timeOrNull,
   out_of_hours: (v: unknown) => (v === "reply" || v === "handoff" ? v : undefined),
+  // §10. Bounds mirror the check constraints in 0018 so a bad value is a 400 here rather
+  // than a 500 out of Postgres.
+  voice: (v: unknown) => textOrNull(v, 500),
+  reply_max_words: (v: unknown) => rangeOrNull(v, 20, 300),
+  languages: (v: unknown) => textOrNull(v, 200),
 } as const;
 
 function bool(v: unknown) {
@@ -236,6 +253,13 @@ function positiveIntOrNull(v: unknown) {
 function rangeOrNull(v: unknown, min: number, max: number) {
   if (v === null) return null;
   return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : undefined;
+}
+
+/** Empty and whitespace-only both mean null: an empty textarea is "unset", not "". */
+function textOrNull(v: unknown, max: number) {
+  if (v === null) return null;
+  if (typeof v !== "string" || v.length > max) return undefined;
+  return v.trim() === "" ? null : v.trim();
 }
 
 /** `HH:MM`, which is what the panel's time input emits and what Postgres `time` takes. */
@@ -915,3 +939,145 @@ admin.get("/api/admin/platform", async (c) => {
     media_limit_bytes: 1024 * 1024 * 1024,
   });
 });
+
+// --- training console -------------------------------------------------------
+
+const CONSOLE_MAX_CHARS = 2_000;
+
+/**
+ * The training console — docs/admin-panel.md §11.
+ *
+ * Runs `decideReply()`, which is the same function the Durable Object runs, so what this
+ * returns is what a customer would have received. It is not a simulation of the reply
+ * path; it *is* the reply path, minus the sending. That is the whole reason the decision
+ * was split out of the DO: a second implementation would drift and then report confidence
+ * that is false.
+ *
+ * Structurally incapable of messaging anyone. A verdict carries no send in it, there is no
+ * conversation, and Meta is never called. It writes exactly two rows: the `usage_events`
+ * row for money it really spent, and the `audit_log` row for having spent it.
+ *
+ * History is supplied by the caller and held in the browser. Nothing here reads or writes
+ * `messages`, so §1's rule that the admin never sees customer content survives — the only
+ * text in play is what the admin typed.
+ */
+admin.post("/api/admin/console/:orgId", async (c) => {
+  const orgId = c.req.param("orgId");
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body) return c.json({ error: "invalid body" }, 400);
+
+  const text = typeof body["text"] === "string" ? body["text"].trim() : "";
+  if (!text) return c.json({ error: "text required" }, 400);
+  if (text.length > CONSOLE_MAX_CHARS) return c.json({ error: "text too long" }, 400);
+
+  const history = consoleHistory(body["history"]);
+  if (!history) return c.json({ error: "invalid history" }, 400);
+
+  const db = createOrgDb(c.env, orgId);
+
+  const { data: org } = await db
+    .organization(
+      "name,sector,ai_paused,cap_micros,hours_open_ist,hours_close_ist,out_of_hours," +
+        "voice,reply_max_words,languages",
+    )
+    .maybeSingle<OrgControls>();
+  if (!org) return c.json({ error: "unknown org" }, 404);
+
+  // Reported whether or not it is applied. A console that went dark on a paused client
+  // would be unavailable exactly when "why has this client stopped replying?" is the
+  // question being asked.
+  const hold = await holdFor(org, async () => {
+    const { data, error } = await db.monthSpendMicros();
+    return error ? null : Number(data ?? 0);
+  });
+  const override = body["overrideHold"] === true;
+
+  const { data: docs } = await db
+    .select("kb_documents", "raw", { limit: 5 })
+    .returns<Array<{ raw: string }>>();
+  const kb = (docs ?? []).map((d) => d.raw).join("\n\n");
+
+  const verdict = await decideReply(c.env, {
+    customerText: text,
+    types: ["text"],
+    imageIds: [],
+    loadContext: async () => ({
+      businessName: org.name,
+      sector: org.sector,
+      kb,
+      history,
+      hold: hold && !override ? HOLD_TEXT[hold] : null,
+      voice: org.voice,
+      replyMaxWords: org.reply_max_words,
+      languages: org.languages,
+    }),
+  });
+
+  const usage = "usage" in verdict ? verdict.usage : undefined;
+  const cost = usage ? costMicros(usage) : 0;
+
+  // Metered under its own category: this is our testing, not the client's traffic, and
+  // folding it into `reply` would inflate the per-reply figure the cost screen exists to
+  // report. `conversation_id` is null, which the column has always allowed.
+  if (cost > 0) {
+    const { error } = await db.insert("usage_events", {
+      conversation_id: null,
+      pricing_category: "console",
+      cost_micros: cost,
+    });
+    if (error) throw new Error(`usage_events insert failed: ${error.message}`);
+  }
+
+  // The typed message is deliberately NOT in the audit row. It spends from the shared
+  // wallet, so the spend is audited; the text is scratch input and nothing is served by
+  // keeping it for a year.
+  const audit = await db.insert("audit_log", {
+    actor_user_id: c.get("caller").userId,
+    action: "console_run",
+    detail: {
+      stage: verdict.stage,
+      action: verdict.action,
+      cost_micros: cost,
+      overrode_hold: override && hold !== null,
+    },
+  });
+  if (audit.error) throw new Error(`audit_log insert failed: ${audit.error.message}`);
+
+  return c.json({
+    action: verdict.action,
+    stage: verdict.stage,
+    text: "text" in verdict ? verdict.text : null,
+    kind: verdict.action === "safe" ? verdict.kind : null,
+    hold,
+    overrodeHold: override && hold !== null,
+    costMicros: cost,
+    usage: usage ?? null,
+    kbBytes: kb.length,
+    sector: org.sector,
+    voice: org.voice,
+    replyMaxWords: org.reply_max_words,
+    languages: org.languages,
+    // The exact system prompt that was sent. "Why did it say that" is usually answered
+    // by reading this rather than by arguing with the model.
+    systemPrompt: "messages" in verdict ? (verdict.messages?.[0]?.content ?? null) : null,
+  });
+});
+
+/** Browser-held history. Rejected rather than trimmed: a silently shortened conversation
+ * would make the console disagree with the DO for reasons nobody could see. */
+function consoleHistory(v: unknown): PromptTurn[] | null {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > HISTORY_LIMIT * 2) return null;
+
+  const turns: PromptTurn[] = [];
+  for (const raw of v) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const turn = raw as Record<string, unknown>;
+    const direction = turn["direction"];
+    const body = turn["body"];
+    if (direction !== "inbound" && direction !== "outbound") return null;
+    if (typeof body !== "string" || body.length > CONSOLE_MAX_CHARS) return null;
+    turns.push({ direction, body });
+  }
+  return turns;
+}

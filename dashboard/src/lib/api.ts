@@ -91,6 +91,10 @@ export interface OrgControls {
   hours_open_ist: string | null;
   hours_close_ist: string | null;
   out_of_hours: "reply" | "handoff";
+  /** admin-panel.md §10. Written from the training console, never by a client. */
+  voice: string | null;
+  reply_max_words: number | null;
+  languages: string | null;
 }
 
 export async function setControls(
@@ -254,6 +258,46 @@ export async function offboardOrg(orgId: string, confirm: string): Promise<void>
 export async function setPlatformAdmin(email: string, grant: boolean): Promise<void> {
   const res = await post("/api/admin/platform-admins", { email, grant });
   if (!res.ok) throw new Error(await res.text());
+}
+
+/** One turn of browser-held console history. Never persisted anywhere. */
+export interface ConsoleTurn {
+  direction: "inbound" | "outbound";
+  body: string;
+}
+
+export interface ConsoleRun {
+  action: "none" | "safe" | "handoff" | "send";
+  /** Which step settled the turn — the answer to "why did it say that". */
+  stage: string;
+  text: string | null;
+  kind: string | null;
+  hold: "paused" | "closed" | "capped" | null;
+  overrodeHold: boolean;
+  costMicros: number;
+  usage: { promptTokens: number; completionTokens: number } | null;
+  kbBytes: number;
+  sector: string;
+  voice: string | null;
+  replyMaxWords: number | null;
+  languages: string | null;
+  systemPrompt: string | null;
+}
+
+/**
+ * Runs the real reply path against a client without sending anything (admin-panel.md
+ * §11). History travels with the request because it lives in the browser only — the
+ * console never touches `messages`.
+ */
+export async function consoleRun(
+  orgId: string,
+  text: string,
+  history: ConsoleTurn[],
+  overrideHold: boolean,
+): Promise<ConsoleRun> {
+  const res = await post(`/api/admin/console/${orgId}`, { text, history, overrideHold });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as ConsoleRun;
 }
 
 export async function takeover(conversationId: string): Promise<void> {

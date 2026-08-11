@@ -372,3 +372,118 @@ Cost: `DASHBOARD_ORIGIN` allowed exactly one origin, so it has to accept both (H
 `cors` takes an array). Change it in the same deploy as the domains, or takeover, erase
 and export start failing CORS while the inbox keeps loading — which reads as three broken
 features rather than one wrong string. **Done in code (§0); the deploy is still pending.**
+
+## 10. Per-org voice — the niche problem
+
+`sector` is **not** the niche and must not be made into one. It is a list of legal
+guardrails: each value exists because a specific sentence is unlawful in that trade
+(RERA claims, diagnosis without a licence, "cures X" under the Drugs & Magic Remedies
+Act). A restaurant and a coaching institute are both `general` because no statute makes
+their sentences dangerous. **Add a sector when there is a law to encode, never when
+there is a new industry.**
+
+What actually differentiates one client from another is `kb_documents` — their menu,
+courses, timings, prices. Same prompt skeleton, entirely different reference block.
+
+The real gap is that **tone is hardcoded for everybody** in `prompt.ts` — "under 60
+words, plain, no markdown", English only. That is tuned for a salon confirming a
+booking, and it squeezes a coaching institute explaining a six-month syllabus into the
+same voice.
+
+Fix it with data, not code, so onboarding stays one INSERT:
+
+| column on `organizations` | default | purpose |
+|---|---|---|
+| `voice text` | null | tone sentence — "warm, unhurried, mirrors Hinglish" |
+| `reply_max_words smallint` | 60 | education needs more room than a salon |
+| `languages text` | `'English'` | which languages the bot may answer in |
+
+Wired into `buildSystemPrompt()` as optional fields. **Null must reproduce today's
+string byte for byte**, so deploying the migration changes no existing client.
+
+⚠️ **Trust boundary.** `voice` is an *instruction* and sits above the reference block;
+the KB is *data* and stays inside the delimiters. `voice` is authored by us in the admin
+panel, never by the client — the moment a client can type into it they can argue with
+the guardrails. Sector rules still win regardless, because `checkOutput()` runs in code
+on the finished text.
+
+## 11. Training console
+
+The point is to see a client's real reply before a customer does, and to have somewhere
+to stand while tuning §10's voice and the KB.
+
+### The one architectural change it forces
+
+`#reply()` (`workers/api/src/do/conversation.ts`) interleaves *deciding* with *sending* —
+every branch calls `#send`, `#sendSafe`, `#sendAndHandoff` or `#sendBlocked`. A console
+cannot call it without messaging real customers.
+
+**Do not reimplement the sequence in the console.** A copy drifts within two sessions
+and then reports confidence that is actively false — worse than having no console.
+
+Extract `decideReply()` into `packages/shared/src/reply.ts`: takes the prompt context and
+the customer text, returns a verdict (`stage`, `action`, `text`, `kind`, `usage`), does no
+I/O but the LLM call. The DO becomes a switch that carries the verdict out; the console
+calls the identical function and renders it.
+
+**Gate: `workers/api/test/reply.test.ts` must pass unmodified.** If a test needs editing,
+behaviour changed and the commit is wrong.
+
+### No migration needed
+
+`usage_events.conversation_id` is already nullable and `pricing_category` is free text, so
+console runs meter as `'console'` with no schema change. `audit_log` takes the org id.
+
+### Surface
+
+`POST /api/admin/console/:orgId`, platform-admin only.
+- In: `{ text, history[], overrideHold? }`
+- Out: the verdict, the exact messages array sent to the model, tokens, ₹
+- Writes one `usage_events` row and one `audit_log` row. **Never `messages`, never
+  `conversations`, never Meta.** That is structural — the verdict has no send in it.
+
+`dashboard/src/Console.tsx`, new admin tab. Org picker; sector and KB size alongside; chat
+pane with history held in the browser only; reset button. Each turn badges **which stage
+decided** — prefilter / model flag / single-reply assert / sector check / sent — because
+"why did it say that" is the actual question being asked.
+
+§10's three voice fields are **editable here**, not read-only as first planned. They are
+reachable from nowhere else — `admin_orgs` does not return them, and putting them on the
+controls panel means dropping and recreating `admin_health` for a screen that cannot judge
+the result anyway. The loop they need is edit → ask the same question again → hear the
+difference, and that loop exists only on this screen.
+
+This does not breach §1's rule that the admin never sees customer message content: the
+text is typed by the admin and is synthetic.
+
+Cost is one reply per run, ≈ ₹0.0035.
+
+### ⚠️ The demo org had no KB — fixed here
+
+`scripts/demo-seed.sql` seeded conversations, usage and media but **zero `kb_documents`
+rows**, so the demo bot answered "I'll check with the team" to every factual question. It
+did not show in inbox screenshots, because those threads are hand-written, and the console
+would have exposed it on the first message. The seed now carries two documents — courses
+and fees, timings and admissions — matching the seeded threads, plus a voice on that same
+org so §10 has somewhere to be seen working.
+
+### Provisional decisions
+
+Taken as defaults so the build can start; say so if any is wrong.
+
+1. **A paused or over-cap org is still testable**, behind a banner and an explicit
+   override click. Otherwise the console goes dark exactly when a client has stopped
+   replying and you need to know why.
+2. **KB editing is a follow-up**, not part of this. It is a separate write path (the
+   admin holds no `org_members` row, so it needs a Worker route on `service_role`) and
+   bundling it doubles the risk of the first version.
+3. **`voice` is admin-only for now.** Making it owner-editable later means giving it the
+   same containment treatment as the KB.
+
+### Build order
+
+1. Extract `decideReply()`. No behaviour change, `reply.test.ts` untouched and green.
+2. `0018_org_voice.sql` + prompt wiring, with a test proving null → today's output.
+3. Console route + `Console.tsx` + demo KB seed.
+
+Then the usual: push → `migrate.yml` → `deploy:dashboard` → `deploy:api`.

@@ -7,11 +7,12 @@ import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
 import Usage from "./Usage";
 import Admin from "./Admin";
+import Console from "./Console";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  const [view, setView] = useState<"inbox" | "usage" | "admin">("inbox");
+  const [view, setView] = useState<"inbox" | "usage" | "admin" | "console">("inbox");
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
@@ -84,6 +85,13 @@ export default function App() {
       <div className="flex h-screen flex-col">
         <nav className="flex items-center gap-2 border-b border-border px-3 py-2">
           <span className="text-sm font-semibold">Platform admin</span>
+          <Button
+            variant={view === "console" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setView(view === "console" ? "admin" : "console")}
+          >
+            Training console
+          </Button>
           <span className="text-xs text-muted-foreground">
             {session.user.email} — no client inbox is readable from this account
           </span>
@@ -92,9 +100,7 @@ export default function App() {
             Sign out
           </Button>
         </nav>
-        <div className="min-h-0 flex-1">
-          <Admin />
-        </div>
+        <div className="min-h-0 flex-1">{view === "console" ? <Console /> : <Admin />}</div>
       </div>
     );
   }
@@ -132,6 +138,15 @@ export default function App() {
             All clients
           </Button>
         )}
+        {isPlatformAdmin && (
+          <Button
+            variant={view === "console" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setView("console")}
+          >
+            Training console
+          </Button>
+        )}
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
           Sign out
@@ -141,6 +156,8 @@ export default function App() {
       <div className="min-h-0 flex-1">
         {view === "admin" && isPlatformAdmin ? (
           <Admin />
+        ) : view === "console" && isPlatformAdmin ? (
+          <Console />
         ) : view === "usage" && isOwner ? (
           <Usage />
         ) : (

@@ -300,6 +300,63 @@ set hours_open_ist = '09:30',
     out_of_hours = 'reply'
 where id = (select org_id from wa_accounts order by created_at limit 1);
 
+-- ---------------------------------------------------------------------------
+-- The knowledge base, without which every answer is "I'll check with the team"
+-- ---------------------------------------------------------------------------
+--
+-- This was missing, and it is the file the whole product turns on. The threads above are
+-- hand-written, so the bot reads as knowledgeable in the inbox while actually knowing
+-- nothing; the training console asks the real model and exposes that in one message.
+-- Content matches the conversations above so the two cannot contradict each other.
+--
+-- Reference data, never instructions: `buildSystemPrompt()` wraps it in delimiters, and
+-- the sector output check runs on the finished reply regardless of what is in here.
+delete from kb_documents
+where org_id = (select org_id from wa_accounts order by created_at limit 1)
+  and title like 'Demo — %';
+
+insert into kb_documents (org_id, title, raw)
+select w.org_id, d.title, d.raw
+from (select org_id from wa_accounts order by created_at limit 1) w
+cross join (values
+  ('Demo — courses and fees', $kb$
+Data Science, 12 weeks. Weekend batch: Saturday and Sunday, 10am to 1pm. Weekday batch:
+Monday to Thursday, 7pm to 9pm. Fees ₹18,000 for the full course, or ₹4,500 per module
+taken one at a time. 10% off if the full amount is paid before the batch begins. No prior
+coding needed — Python is taught from the first session, and basic spreadsheets are
+enough to start.
+
+Digital Marketing, 8 weeks. Weekends only, 2pm to 5pm. Fees ₹12,000.
+
+Spoken English, 6 weeks. Weekday mornings, 8am to 9am. Fees ₹6,000.
+
+Fees may be paid in two instalments on request, by UPI, card or bank transfer. No refunds
+once a batch has begun; a transfer to the next batch is allowed up to the second session.
+$kb$),
+  ('Demo — timings, location and admissions', $kb$
+Centre: Indiranagar, 100 Feet Road, above the HDFC branch, Bengaluru 560038. Office hours
+9:30am to 7pm, Monday to Saturday. Closed Sunday except during class hours.
+
+The next weekend Data Science batch begins on the 6th and four seats remain. Batch size
+is capped at 20. Anyone may sit in on the first session before deciding to enrol.
+
+To enrol: confirm the batch, pay the first instalment, and bring one photo ID to the
+first session. A certificate is issued on 80% attendance.
+
+Placement assistance is offered — CV review and interview practice. We do not guarantee a
+job and do not quote salary figures.
+$kb$)
+) as d(title, raw);
+
+-- §10's voice, on the one org that has a KB to talk about. Left null everywhere else on
+-- purpose: null has to reproduce the old prompt byte for byte, and this is the place to
+-- watch a tone sentence change the answer without a line of code changing.
+update organizations
+set voice = 'warm and unhurried; explains before it sells; mirrors the customer''s Hinglish',
+    reply_max_words = 120,
+    languages = 'English, Hindi, Kannada'
+where id = (select org_id from wa_accounts order by created_at limit 1);
+
 commit;
 
 -- The live database still holds the earlier six-digit demo rows (999001…999008), which
