@@ -63,7 +63,7 @@ export default function Inbox() {
   async function load() {
     const { data, error } = await supabase
       .from("conversations")
-      .select("id,customer_wa_id,customer_name,handoff_state,last_message_at,window_expires_at")
+      .select("id,customer_wa_id,handoff_state,last_message_at,window_expires_at")
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(LIST_LIMIT)
       .returns<Conversation[]>();

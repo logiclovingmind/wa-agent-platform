@@ -172,9 +172,6 @@ export default function Thread({
         <div>
           <div className="text-sm font-medium">{customerLabel(conversation)}</div>
           <div className="text-xs text-muted-foreground">
-            {/* The number as well as the name here, unlike the list: this is where an
-                owner goes to look someone up in their own records. */}
-            {conversation.customer_name && <>+{conversation.customer_wa_id}{" · "}</>}
             {human ? "You are replying" : "Bot is replying"}
             {left && (
               <>
