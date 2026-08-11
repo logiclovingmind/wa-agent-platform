@@ -26,12 +26,30 @@ export default function Inbox() {
   const [flags, setFlags] = useState<Map<string, SafetyFlag[]>>(new Map());
   const [openId, setOpenId] = useState<string | null>(null);
   const [onlyWaiting, setOnlyWaiting] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
 
   useNow();
 
   useEffect(() => {
     void load();
+    void loadRole();
   }, []);
+
+  /**
+   * Erase and export are 403 for staff at the Worker, which is the actual lock. This
+   * only decides whether to render the buttons, so a stale answer hides a control or
+   * shows one that fails — never a way in.
+   */
+  async function loadRole() {
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    const { data } = await supabase
+      .from("org_members")
+      .select("role")
+      .eq("user_id", auth.user.id)
+      .maybeSingle<{ role: string }>();
+    setIsOwner(data?.role === "owner");
+  }
 
   async function load() {
     const { data } = await supabase
@@ -147,7 +165,12 @@ export default function Inbox() {
       </aside>
 
       {open ? (
-        <Thread conversation={open} flags={flags.get(open.id) ?? []} onChanged={load} />
+        <Thread
+          conversation={open}
+          flags={flags.get(open.id) ?? []}
+          isOwner={isOwner}
+          onChanged={load}
+        />
       ) : (
         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
           Pick a conversation.

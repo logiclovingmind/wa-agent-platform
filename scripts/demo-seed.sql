@@ -38,7 +38,11 @@ cross join (values
   -- Video: never fetched and never stored. Asks for a photo instead.
   ('999006', null, 'requested', interval '9 minutes', interval '21 hours'),
   -- Voice note: stored and playable, but still a handoff — nothing transcribes it.
-  ('999007', 'aaaa0000-0000-4000-8000-000000000007', 'requested', interval '12 minutes', interval '19 hours')
+  ('999007', 'aaaa0000-0000-4000-8000-000000000007', 'requested', interval '12 minutes', interval '19 hours'),
+  -- Exists to be destroyed. Erase on an unflagged conversation deletes the row itself,
+  -- so pointing the demo at any of the above would cost that demo; re-run this file to
+  -- get it back. Erase on 999004 is the other half — flagged, so it scrubs and stays.
+  ('999008', null, 'bot',       interval '30 minutes', interval '18 hours')
 ) as v(wa_id, id, state, age, win);
 
 -- `type` is what makes a row render as an attachment. media_key is the path the Worker
@@ -70,7 +74,9 @@ join (values
   ('999006', 2, 'outbound', 'I can''t open videos here. Please send a photo or describe it in a message, and someone from our team will help.', 'text', false, 'read', interval '9 minutes'),
   -- A voice note has no caption at all, so the bubble is the player and nothing else.
   ('999007', 1, 'inbound',  null,                                                    'audio', true,  null,   interval '13 minutes'),
-  ('999007', 2, 'outbound', 'Thanks — I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, 'read', interval '12 minutes')
+  ('999007', 2, 'outbound', 'Thanks — I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, 'read', interval '12 minutes'),
+  ('999008', 1, 'inbound',  'Please delete my details from your system.',            'text',  false, null,   interval '31 minutes'),
+  ('999008', 2, 'outbound', 'Of course — I''ll pass that on and it will be taken care of.', 'text', false, 'read', interval '30 minutes')
 ) as m(wa_id, seq, dir, body, type, stored, status, age) on m.wa_id = c.customer_wa_id;
 
 insert into safety_flags (org_id, conversation_id, message_id, kind)

@@ -7,7 +7,7 @@ import {
   type SafetyFlag,
 } from "./lib/supabase";
 import Attachment, { useSignedUrls } from "./Attachment";
-import { release, reply, takeover } from "./lib/api";
+import { erase, exportConversation, release, reply, takeover } from "./lib/api";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { cn, ist, useNow, windowLeft } from "./lib/utils";
@@ -27,13 +27,26 @@ function merge(a: Message[], b: Message[]): Message[] {
   return [...byId.values()].sort((x, y) => x.created_at.localeCompare(y.created_at));
 }
 
+/** Saves without a server round trip: the Worker already returned the whole export. */
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Thread({
   conversation,
   flags,
+  isOwner,
   onChanged,
 }: {
   conversation: Conversation;
   flags: SafetyFlag[];
+  isOwner: boolean;
   onChanged: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -42,6 +55,10 @@ export default function Thread({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<Conversation["handoff_state"] | null>(null);
+  // Erasure is irreversible, so it takes two clicks. Cheaper than a dialog dependency.
+  const [confirmErase, setConfirmErase] = useState(false);
+  // Erasure rewrites the thread underneath us, and Realtime does not deliver deletes.
+  const [reloadKey, setReloadKey] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
 
   useNow();
@@ -55,6 +72,9 @@ export default function Thread({
 
   // The parent caught up, or a different conversation opened. Either way stop guessing.
   useEffect(() => setOptimistic(null), [conversation.handoff_state, id]);
+
+  // An armed confirm must not survive switching customers.
+  useEffect(() => setConfirmErase(false), [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +117,7 @@ export default function Thread({
       drop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, reloadKey]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView();
@@ -163,21 +183,79 @@ export default function Thread({
             )}
           </div>
         </div>
-        {human ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => act(() => release(id), "bot")}
-          >
-            Hand back to bot
-          </Button>
-        ) : (
-          <Button size="sm" disabled={busy} onClick={() => act(() => takeover(id), "human")}>
-            Take over
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Owner-only here because they are owner-only at the Worker; staff would get
+              a 403 from a button that looked available. */}
+          {isOwner &&
+            (confirmErase ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmErase(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    act(async () => {
+                      await erase(id);
+                      setConfirmErase(false);
+                      setReloadKey((n) => n + 1);
+                    })
+                  }
+                >
+                  {flags.length > 0 ? "Erase content, keep the flag" : "Erase permanently"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    act(async () => {
+                      const data = await exportConversation(id);
+                      downloadJson(`conversation-${conversation.customer_wa_id}.json`, data);
+                    })
+                  }
+                >
+                  Export
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => setConfirmErase(true)}
+                >
+                  Erase
+                </Button>
+              </>
+            ))}
+          {human ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => act(() => release(id), "bot")}
+            >
+              Hand back to bot
+            </Button>
+          ) : (
+            <Button size="sm" disabled={busy} onClick={() => act(() => takeover(id), "human")}>
+              Take over
+            </Button>
+          )}
+        </div>
       </header>
+
+      {confirmErase && (
+        <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs">
+          {flags.length > 0
+            ? "This conversation is flagged. Message content goes; the flag, timestamps and message ids stay, because they are the proof the system responded correctly."
+            : "Every message in this conversation is deleted, along with any stored attachments. This cannot be undone."}
+        </div>
+      )}
 
       {flags.length > 0 && (
         <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-3">
