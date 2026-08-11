@@ -22,22 +22,23 @@ export const supabase = createClient(
 export interface Conversation {
   id: string;
   customer_wa_id: string;
+  /** WhatsApp profile name. Null until the customer sends a message, or if they set none. */
+  customer_name: string | null;
   handoff_state: "bot" | "requested" | "human" | "returned";
   last_message_at: string | null;
   window_expires_at: string | null;
 }
 
 /**
- * The number in full and with its country code: a truncated one is useless for looking
- * someone up. Meta stores wa_id as digits with no `+`, and the digits are not ours to
- * reformat — spacing rules differ per country and a wrong grouping reads as a wrong
- * number.
+ * What to call this customer. The WhatsApp profile name is what an owner recognises;
+ * the number is the fallback, in full and with its country code, because a truncated
+ * one is useless for looking someone up.
  *
- * The WhatsApp profile name is the better label and the Worker already stores it, but
- * reading it here waits until migration 0009 has been applied to the live database.
+ * Meta stores wa_id as digits with no `+`, and the digits are not ours to reformat —
+ * spacing rules differ per country and a wrong grouping reads as a wrong number.
  */
 export function customerLabel(c: Conversation): string {
-  return `+${c.customer_wa_id}`;
+  return c.customer_name ?? `+${c.customer_wa_id}`;
 }
 
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
