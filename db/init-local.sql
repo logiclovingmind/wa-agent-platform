@@ -42,7 +42,19 @@ create table if not exists auth.users (
   raw_user_meta_data jsonb,
   is_sso_user boolean not null default false,
   created_at timestamptz not null default now(),
-  updated_at timestamptz
+  updated_at timestamptz,
+  -- Nullable here exactly as they are on Supabase. GoTrue reads them into non-nullable
+  -- Go strings, so a NULL in any of them makes the account unable to log in while
+  -- looking entirely correct in SQL — carried here so scripts/accounts.sql can be
+  -- rehearsed against the same trap it has to work around.
+  confirmation_token text,
+  recovery_token text,
+  email_change text,
+  email_change_token_new text,
+  email_change_token_current text,
+  phone_change text,
+  phone_change_token text,
+  reauthentication_token text
 );
 create unique index if not exists users_email_partial_key
   on auth.users (email) where is_sso_user = false;

@@ -75,6 +75,36 @@ select
 from provisioned p
 where not exists (select 1 from auth.users u where u.email = p.email);
 
+-- GoTrue scans these token columns into non-nullable Go strings, so a row carrying NULL
+-- in any of them fails every lookup with "Database error querying schema" — the account
+-- exists, looks perfect in the Supabase dashboard, and cannot log in. GoTrue's own
+-- inserts write empty strings; hand-written ones have to do the same.
+--
+-- Driven off the catalogue rather than a fixed column list because this set has grown
+-- across GoTrue versions, and naming a column the deployed version lacks would fail the
+-- whole run.
+do $$
+declare
+  col text;
+begin
+  foreach col in array array[
+    'confirmation_token', 'recovery_token', 'email_change', 'email_change_token_new',
+    'email_change_token_current', 'phone_change', 'phone_change_token',
+    'reauthentication_token'
+  ]
+  loop
+    if exists (
+      select 1 from information_schema.columns
+       where table_schema = 'auth' and table_name = 'users' and column_name = col
+    ) then
+      execute format(
+        'update auth.users u set %I = '''' from provisioned p
+          where u.email = p.email and u.%I is null', col, col);
+    end if;
+  end loop;
+end;
+$$;
+
 -- One identity per email account. Without it the account exists, looks correct in the
 -- Supabase dashboard, and misbehaves on anything that resolves a user's identities.
 insert into auth.identities (
