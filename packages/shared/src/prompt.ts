@@ -13,6 +13,12 @@ export interface ChatMessage {
   content: string;
 }
 
+/**
+ * The platform tone, used by every client whose `reply_max_words` is null. It lives
+ * here and not as a database default so there is exactly one place to change it.
+ */
+export const DEFAULT_REPLY_MAX_WORDS = 60;
+
 export interface PromptInput {
   businessName: string;
   sector: Sector;
@@ -22,6 +28,16 @@ export interface PromptInput {
   history: PromptTurn[];
   /** The debounced burst, already joined. Untrusted input. */
   customerText: string;
+  /**
+   * `organizations.voice` — an admin-authored tone line. Unlike the KB this is an
+   * *instruction* and sits above the reference block, so it must never become
+   * client-editable without the same containment the KB gets.
+   */
+  voice?: string | null | undefined;
+  /** `organizations.reply_max_words`. Null → DEFAULT_REPLY_MAX_WORDS. */
+  replyMaxWords?: number | null | undefined;
+  /** `organizations.languages`. Null → the prompt says nothing about language at all. */
+  languages?: string | null | undefined;
 }
 
 const SECTOR_RULES: Record<Sector, string> = {
@@ -42,7 +58,11 @@ export function buildSystemPrompt(input: Omit<PromptInput, "history" | "customer
     // Invariant 5 lives in two places. This is the half the model sees; the other half
     // is assertSingleReply(), because a prompt is a request and not a guarantee.
     "- Reply with exactly one WhatsApp message. Never split your answer.",
-    "- Keep it under 60 words and plain. No markdown, no bullet lists.",
+    `- Keep it under ${input.replyMaxWords ?? DEFAULT_REPLY_MAX_WORDS} words and plain. No markdown, no bullet lists.`,
+    // Null on both of these emits nothing, so an unconfigured client gets the exact
+    // prompt it got before these columns existed.
+    input.voice ? `- Tone: ${input.voice.trim()}` : "",
+    input.languages ? `- You may reply in these languages, matching the customer's: ${input.languages.trim()}.` : "",
     "- Answer only from the reference block below. If it is not there, say you will check with the team.",
     "- Never quote a price that is not in the reference block.",
     SECTOR_RULES[input.sector] ? `- ${SECTOR_RULES[input.sector]}` : "",

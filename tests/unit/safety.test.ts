@@ -4,6 +4,7 @@ import {
   buildMessages,
   buildSystemPrompt,
   checkOutput,
+  DEFAULT_REPLY_MAX_WORDS,
   HISTORY_LIMIT,
   prefilter,
 } from "@wa/shared";
@@ -114,5 +115,56 @@ describe("prompt containment", () => {
     // system + capped history + the new user turn
     expect(messages).toHaveLength(HISTORY_LIMIT + 2);
     expect(messages[1]!.content).toBe("turn 30");
+  });
+});
+
+describe("per-org voice", () => {
+  const base = { businessName: "Acme Salon", sector: "general" as const, kb: "Haircut ₹400." };
+
+  it("changes nothing at all when the columns are null", () => {
+    // The whole safety of migration 0018: every existing client has null in all three,
+    // so deploying it must not alter one byte of what they were already sending.
+    const before = buildSystemPrompt(base);
+    const after = buildSystemPrompt({
+      ...base,
+      voice: null,
+      replyMaxWords: null,
+      languages: null,
+    });
+
+    expect(after).toBe(before);
+    expect(after).toContain(`under ${DEFAULT_REPLY_MAX_WORDS} words`);
+    expect(after).not.toContain("Tone:");
+    expect(after).not.toContain("languages");
+  });
+
+  it("gives a coaching institute room and a voice without touching the repo", () => {
+    const system = buildSystemPrompt({
+      ...base,
+      businessName: "Sunrise Coaching",
+      voice: "patient and encouraging, explains before it sells",
+      replyMaxWords: 140,
+      languages: "English, Hindi",
+    });
+
+    expect(system).toContain("under 140 words");
+    expect(system).toContain("- Tone: patient and encouraging, explains before it sells");
+    expect(system).toContain("English, Hindi");
+  });
+
+  it("keeps the voice above the reference block, where instructions belong", () => {
+    // voice is an instruction and the KB is data. If voice ever slid inside the
+    // delimiters the model would be told to ignore it.
+    const system = buildSystemPrompt({ ...base, voice: "warm and brief" });
+    expect(system.indexOf("- Tone: warm and brief")).toBeLessThan(system.indexOf("<<<REFERENCE"));
+  });
+
+  it("still enforces the sector rule when a voice argues with it", () => {
+    const system = buildSystemPrompt({
+      ...base,
+      sector: "pharmacy",
+      voice: "confident, reassures customers that our remedies work",
+    });
+    expect(system).toContain("never suggest a dose");
   });
 });
