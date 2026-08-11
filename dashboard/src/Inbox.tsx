@@ -43,12 +43,14 @@ export default function Inbox() {
   async function loadRole() {
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return;
+    // Every row, not maybeSingle: a user in two orgs would make that error out and
+    // silently downgrade an owner to staff.
     const { data } = await supabase
       .from("org_members")
       .select("role")
       .eq("user_id", auth.user.id)
-      .maybeSingle<{ role: string }>();
-    setIsOwner(data?.role === "owner");
+      .returns<{ role: string }[]>();
+    setIsOwner((data ?? []).some((m) => m.role === "owner"));
   }
 
   async function load() {
