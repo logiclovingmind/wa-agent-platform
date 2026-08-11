@@ -21,8 +21,8 @@ const BUCKET = "media";
 
 /** Keyed by the wa_message_id the seed writes, so a renamed row fails loudly here. */
 const FIXTURE: Record<string, { file: string; contentType: string }> = {
-  "demo-999005-1": { file: "demo-photo.jpg", contentType: "image/jpeg" },
-  "demo-999007-1": { file: "demo-voice.m4a", contentType: "audio/mp4" },
+  "demo-919990010005-1": { file: "demo-photo.jpg", contentType: "image/jpeg" },
+  "demo-919990010007-1": { file: "demo-voice.m4a", contentType: "audio/mp4" },
 };
 
 const remove = process.argv.includes("--remove");

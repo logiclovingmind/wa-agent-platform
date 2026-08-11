@@ -60,7 +60,11 @@ function stub(row: Record<string, unknown> | null): RestCall[] {
   });
 }
 
-function messagePayload(waMessageId: string, phoneNumberId = PHONE_NUMBER_ID): string {
+function messagePayload(
+  waMessageId: string,
+  phoneNumberId = PHONE_NUMBER_ID,
+  contacts?: Array<{ wa_id: string; profile: { name: string } }>,
+): string {
   return JSON.stringify({
     entry: [
       {
@@ -68,6 +72,7 @@ function messagePayload(waMessageId: string, phoneNumberId = PHONE_NUMBER_ID): s
           {
             value: {
               metadata: { phone_number_id: phoneNumberId },
+              ...(contacts ? { contacts } : {}),
               messages: [
                 {
                   id: waMessageId,
@@ -176,6 +181,22 @@ describe("POST /webhook/:slug", () => {
       // Meta's timestamp, not our clock.
       created_at: "2026-02-25T06:13:20.000Z",
     });
+  });
+
+  it("stores the WhatsApp profile name belonging to the sender", async () => {
+    const calls = stub(await account());
+    // Two contacts, deliberately with the sender second: one webhook can carry several
+    // customers, so taking contacts[0] would file the reply under the wrong name.
+    const body = messagePayload("wamid.NAMED", PHONE_NUMBER_ID, [
+      { wa_id: "919999999999", profile: { name: "Someone Else" } },
+      { wa_id: CUSTOMER, profile: { name: "Ananya Rao" } },
+    ]);
+    expect((await post(body, await sign(body))).status).toBe(200);
+
+    const upserted = calls
+      .filter((c) => c.table === "conversations" && c.method !== "GET")
+      .flatMap((c) => c.body as Array<Record<string, unknown>>);
+    expect(upserted[0]).toMatchObject({ customer_name: "Ananya Rao" });
   });
 
   it("ignores a message for another phone number on the same WABA", async () => {

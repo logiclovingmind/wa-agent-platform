@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   SAFETY_LABEL,
+  customerLabel,
   supabase,
   type Conversation,
   type Message,
@@ -169,8 +170,11 @@ export default function Thread({
     <div className="flex flex-1 flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
-          <div className="text-sm font-medium">{conversation.customer_wa_id}</div>
+          <div className="text-sm font-medium">{customerLabel(conversation)}</div>
           <div className="text-xs text-muted-foreground">
+            {/* The number as well as the name here, unlike the list: this is where an
+                owner goes to look someone up in their own records. */}
+            {conversation.customer_name && <>+{conversation.customer_wa_id}{" · "}</>}
             {human ? "You are replying" : "Bot is replying"}
             {left && (
               <>

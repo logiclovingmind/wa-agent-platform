@@ -84,6 +84,11 @@ function extractInbound(raw: string, account: WaAccountRoute): InboundMessage[] 
           orgId: account.org_id,
           waAccountId: account.id,
           customerWaId: msg.from,
+          // Matched by wa_id rather than taking contacts[0]: one webhook can carry
+          // messages from several customers, and the arrays are not aligned.
+          customerName:
+            change.value?.contacts?.find((contact) => contact.wa_id === msg.from)?.profile?.name ??
+            null,
           waMessageId: msg.id,
           type: msg.type ?? "unknown",
           // A caption is the only text a media message carries, and it is what the
@@ -141,6 +146,7 @@ interface MetaWebhook {
     changes?: Array<{
       value?: {
         metadata?: { phone_number_id?: string };
+        contacts?: Array<{ wa_id?: string; profile?: { name?: string } }>;
         messages?: Array<{
           id?: string;
           from?: string;

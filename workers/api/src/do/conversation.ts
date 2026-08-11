@@ -47,6 +47,8 @@ export interface InboundMessage {
   orgId: string;
   waAccountId: string;
   customerWaId: string;
+  /** WhatsApp profile name. Null when the customer has not set one. */
+  customerName?: string | null;
   waMessageId: string;
   type: string;
   body: string | null;
@@ -279,8 +281,14 @@ export class ConversationDO extends DurableObject<Env> {
 
     const cached = this.#get("conversation_id");
     if (cached) {
+      // Only written when Meta actually sent one: a customer who clears their profile
+      // name should not blank out the name the owner has been seeing for months.
       const { error } = await db
-        .update("conversations", { window_expires_at: expires, last_message_at: lastAt })
+        .update("conversations", {
+          window_expires_at: expires,
+          last_message_at: lastAt,
+          ...(msg.customerName ? { customer_name: msg.customerName } : {}),
+        })
         .eq("id", cached);
       if (error) throw new Error(`conversation update failed: ${error.message}`);
       return cached;
@@ -294,6 +302,7 @@ export class ConversationDO extends DurableObject<Env> {
           customer_wa_id: msg.customerWaId,
           window_expires_at: expires,
           last_message_at: lastAt,
+          ...(msg.customerName ? { customer_name: msg.customerName } : {}),
         },
         { onConflict: "org_id,wa_account_id,customer_wa_id" },
       )

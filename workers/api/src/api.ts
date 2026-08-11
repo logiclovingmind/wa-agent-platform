@@ -130,7 +130,7 @@ api.post("/api/conversations/:id/export", async (c) => {
 
   const conversationId = c.req.param("id");
   const conversation = await createOrgDb(c.env, caller.orgId)
-    .select("conversations", "id,customer_wa_id,handoff_state,created_at,last_message_at", {
+    .select("conversations", "id,customer_wa_id,customer_name,handoff_state,created_at,last_message_at", {
       limit: 1,
     })
     .eq("id", conversationId)
