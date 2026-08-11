@@ -17,6 +17,10 @@ on:
         description: "Also run scripts/demo-seed.sql (demo rows for clicking through features)"
         type: boolean
         default: false
+      provision_accounts:
+        description: "Also run scripts/accounts.sql (platform admin + demo owner/staff logins)"
+        type: boolean
+        default: false
 
 concurrency:
   group: migrate
@@ -48,7 +52,7 @@ jobs:
         run: pnpm db:migrate --remote
 
       - name: Install psql
-        if: ${{ inputs.seed_demo }}
+        if: ${{ inputs.seed_demo || inputs.provision_accounts }}
         run: |
           set -euo pipefail
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -65,3 +69,19 @@ jobs:
       - name: Seed demo data
         if: ${{ inputs.seed_demo }}
         run: psql -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" -f scripts/demo-seed.sql
+
+      # Passwords come from secrets rather than workflow inputs: inputs are recorded in
+      # the run's parameters and shown to anyone who can read the run, while secrets are
+      # masked in logs. Re-running resets the three passwords to whatever the secrets
+      # currently hold, which is also how to rotate them.
+      - name: Provision accounts
+        if: ${{ inputs.provision_accounts }}
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ADMIN_PASSWORD" && test -n "$DEMO_PASSWORD"
+          psql -v ON_ERROR_STOP=1 "$SUPABASE_DB_URL" \
+            -v admin_pw="$ADMIN_PASSWORD" -v demo_pw="$DEMO_PASSWORD" \
+            -f scripts/accounts.sql

@@ -23,11 +23,40 @@ $$;
 
 grant usage on schema public, auth to anon, authenticated, service_role;
 
--- Supabase's auth.users. Only the columns the app actually joins against.
+-- Supabase's auth.users. The columns the app joins against, plus the ones GoTrue itself
+-- requires — scripts/accounts.sql writes accounts directly here on live, and rehearsing
+-- that against a three-column stub proves nothing.
+--
+-- The email index is partial, copying GoTrue exactly, because that detail has teeth: a
+-- partial unique index cannot be inferred by ON CONFLICT, so an upsert that passes
+-- against a plain `unique` constraint fails on the real database.
 create table if not exists auth.users (
+  instance_id uuid default '00000000-0000-0000-0000-000000000000',
   id uuid primary key default gen_random_uuid(),
-  email text unique,
-  created_at timestamptz not null default now()
+  aud text,
+  role text,
+  email text,
+  encrypted_password text,
+  email_confirmed_at timestamptz,
+  raw_app_meta_data jsonb,
+  raw_user_meta_data jsonb,
+  is_sso_user boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
+);
+create unique index if not exists users_email_partial_key
+  on auth.users (email) where is_sso_user = false;
+
+create table if not exists auth.identities (
+  id uuid primary key default gen_random_uuid(),
+  provider_id text not null,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  identity_data jsonb not null,
+  provider text not null,
+  last_sign_in_at timestamptz,
+  created_at timestamptz,
+  updated_at timestamptz,
+  unique (provider_id, provider)
 );
 
 -- PostgREST sets request.jwt.claims per request. Tests set it with `set local`.

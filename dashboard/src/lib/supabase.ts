@@ -48,6 +48,24 @@ export interface DailyUsage {
   events: number;
 }
 
+/**
+ * One client, as the all-clients screen sees it. From the `admin_orgs` RPC — the only
+ * read in the dashboard that deliberately crosses orgs. Every other query here is
+ * scoped by RLS to the org the caller belongs to.
+ */
+export interface AdminOrg {
+  org_id: string;
+  name: string;
+  sector: string;
+  is_demo: boolean;
+  month_cost_micros: number;
+  month_events: number;
+  open_flags: number;
+  waiting: number;
+  conversations: number;
+  last_message_at: string | null;
+}
+
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
 
 export interface SafetyFlag {
@@ -75,6 +93,12 @@ export interface Message {
    * not an error: video is never stored, and retention drops the bytes at 30 days.
    */
   media_key: string | null;
+  /**
+   * Whether a detector actually examined this message — the regex prefilter for text,
+   * the vision classifier for images. Never infer it from `type`: an image whose
+   * classification failed is exactly as unscreened as a voice note.
+   */
+  safety_screened: boolean;
   created_at: string;
   status: string | null;
 }

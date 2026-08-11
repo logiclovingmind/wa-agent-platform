@@ -67,6 +67,52 @@ describe("org isolation, anon path", () => {
     }
   });
 
+  // admin_orgs is the one function that deliberately crosses orgs, so it is security
+  // definer and RLS does not apply inside it. Its own `is_platform_admin` check is
+  // therefore the only thing standing between a client owner and every client's spend.
+  it("refuses admin_orgs to an ordinary owner and to anon", async () => {
+    await expect(
+      asUser(db, fx.userA, () => db.query("select * from public.admin_orgs()")),
+    ).rejects.toThrow(/admin only/i);
+
+    await db.query("begin");
+    try {
+      await db.query("set local role anon");
+      await expect(db.query("select * from public.admin_orgs()")).rejects.toThrow(
+        /permission denied/i,
+      );
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
+  it("returns every org to a platform admin", async () => {
+    // The flag has to be granted from outside the authenticated role — a user cannot
+    // mint it for themselves, which the test above this one relies on.
+    await db.query("begin");
+    try {
+      await db.query("update users set is_platform_admin = true where id = $1", [fx.userA]);
+      await db.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: fx.userA, role: "authenticated" }),
+      ]);
+      await db.query("set local role authenticated");
+
+      const rows = (
+        await db.query<{ org_id: string; month_cost_micros: string; conversations: string }>(
+          "select org_id, month_cost_micros, conversations from public.admin_orgs()",
+        )
+      ).rows;
+
+      expect(rows.map((r) => r.org_id).sort()).toEqual([fx.orgA, fx.orgB].sort());
+      // Each org gets one conversation and one 1000-micro event from the seed, so a
+      // rollup that joined wrongly would show 2000 or two conversations here.
+      expect(rows.map((r) => r.conversations)).toEqual(["1", "1"]);
+      expect(rows.map((r) => r.month_cost_micros)).toEqual(["1000", "1000"]);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   it("cannot see org B's members or users", async () => {
     const emails = await asUser(db, fx.userA, async () =>
       (await db.query<{ email: string }>("select email from users")).rows.map((r) => r.email),
