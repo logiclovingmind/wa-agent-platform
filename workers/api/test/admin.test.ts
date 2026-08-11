@@ -15,7 +15,7 @@ const ORG_NEW = "33333333-3333-3333-3333-333333333333";
 const ORG_NAME = "Acme Dental";
 
 /** GoTrue admin calls, which are not PostgREST and so are recorded separately. */
-const authCalls: Array<{ method: string; path: string }> = [];
+const authCalls: Array<{ method: string; path: string; redirectTo?: string | null }> = [];
 
 /** PostgREST inserts arrive as an array of rows, even when there is one. */
 const rows = (c: RestCall | undefined) => c?.body as Array<Record<string, unknown>> | undefined;
@@ -91,17 +91,23 @@ async function harness(
     async (req, url) => {
       if (url.pathname === "/auth/v1/user") return Response.json({ id: ADMIN });
       if (url.pathname.startsWith("/auth/v1/admin/")) {
-        authCalls.push({ method: req.method, path: url.pathname });
         // GoTrue returns the user with the link flattened onto it; supabase-js splits the
         // two apart into `data.user` and `data.properties`.
         if (url.pathname.endsWith("/generate_link")) {
           const body = (await req.json()) as { email: string; type: string };
+          // supabase-js puts `redirectTo` in the query string here, not the body.
+          authCalls.push({
+            method: req.method,
+            path: url.pathname,
+            redirectTo: url.searchParams.get("redirect_to"),
+          });
           return Response.json({
             id: body.type === "invite" ? INVITED : STAFF,
             email: body.email,
             action_link: "https://auth.test/verify?token=one-time",
           });
         }
+        authCalls.push({ method: req.method, path: url.pathname });
         return Response.json({});
       }
       if (url.pathname === "/api/v1/credits") {
@@ -438,6 +444,20 @@ describe("flag queue and access management", () => {
     // The link is a credential. It is handed back once and never written down.
     const audit = inserted.find((c) => c.table.startsWith("audit_log"));
     expect(JSON.stringify(audit?.body)).not.toContain("one-time");
+  });
+
+  // Left to GoTrue, both links land on the project's Site URL, which was its untouched
+  // `http://localhost:3000` default — a link that signs in fine and goes nowhere.
+  it.each([
+    ["invite", () => send("POST", `/api/admin/orgs/${ORG_A}/users`, { email: "a@b.test", role: "staff" })],
+    ["recovery", () => send("POST", `/api/admin/orgs/${ORG_A}/users/${STAFF}/reset`)],
+  ])("points the %s link at the canonical dashboard host", async (_type, call) => {
+    await harness({ admin: true });
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    const link = authCalls.find((c) => c.path.endsWith("/generate_link"));
+    expect(link?.redirectTo).toBe("https://app.logiclovingmind.com/");
   });
 
   it("refuses to demote or remove an org's only owner", async () => {

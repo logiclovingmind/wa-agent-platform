@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { Button } from "./components/ui/button";
 import SignIn from "./SignIn";
+import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
 import Usage from "./Usage";
 import Admin from "./Admin";
@@ -14,13 +15,20 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setReady(true);
     });
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next);
+      // A recovery link signs the user in before they have chosen anything, so the
+      // session alone cannot tell this apart from an ordinary login. This event can
+      // arrive before or after getSession resolves, hence a flag rather than a branch.
+      if (event === "PASSWORD_RECOVERY") setRecovering(true);
+    });
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -60,6 +68,9 @@ export default function App() {
 
   if (!ready) return <div className="p-8 text-muted-foreground">Loading…</div>;
   if (!session) return <SignIn />;
+  // Ahead of every shell below, including the admin one: an account arriving on a
+  // recovery link has nothing to do here until the password is actually changed.
+  if (recovering) return <SetPassword onDone={() => setRecovering(false)} />;
 
   /**
    * Two products behind one login screen, told apart by whether the account belongs to

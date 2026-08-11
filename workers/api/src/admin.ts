@@ -28,6 +28,21 @@ admin.use("/api/admin/*", async (c, next) => {
   await next();
 });
 
+/**
+ * Where a GoTrue link drops the person who clicks it. Stated here rather than left to the
+ * project's Site URL, which sat at GoTrue's `http://localhost:3000` default and was
+ * therefore baked into every invite and recovery link this panel had ever issued — a
+ * setting in a console nobody reopens is not somewhere a client-facing URL should live.
+ *
+ * First entry of DASHBOARD_ORIGIN, which is the canonical host; the rest are additional
+ * origins CORS should accept. Supabase still has to allow this URL under Auth → URL
+ * Configuration → Redirect URLs, and that list must stay exact: a wildcard there lets a
+ * recovery token be aimed at someone else's site.
+ */
+function linkRedirect(env: Env): string {
+  return `${env.DASHBOARD_ORIGIN.split(",")[0]?.trim() ?? ""}/`;
+}
+
 interface WaAccount {
   id: string;
   phone_number_id: string;
@@ -388,6 +403,7 @@ admin.post("/api/admin/orgs/:orgId/users", async (c) => {
   const { data: link, error: linkError } = await sb.auth.admin.generateLink({
     type: "invite",
     email,
+    options: { redirectTo: linkRedirect(c.env) },
   });
   if (linkError || !link.user) return c.json({ error: linkError?.message ?? "invite failed" }, 400);
 
@@ -486,6 +502,7 @@ admin.post("/api/admin/orgs/:orgId/users/:userId/reset", async (c) => {
   const { data: link, error } = await createServiceClient(c.env).auth.admin.generateLink({
     type: "recovery",
     email,
+    options: { redirectTo: linkRedirect(c.env) },
   });
   if (error) return c.json({ error: error.message }, 400);
 

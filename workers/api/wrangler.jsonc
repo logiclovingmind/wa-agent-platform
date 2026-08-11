@@ -42,7 +42,11 @@
     // prints, and it still answers if DNS is ever in flight. Reads go straight to
     // Supabase and keep working, so a stale value here breaks only takeover, erase and
     // export — which reads as three broken features rather than one wrong string.
-    "DASHBOARD_ORIGIN": "https://wa-agent-dashboard.pages.dev,https://app.logiclovingmind.com",
+    //
+    // ⚠️ The FIRST entry is the canonical host, not just one of the list: `linkRedirect()`
+    // in admin.ts sends every invite and password-recovery link there. Reordering this
+    // changes where clients land, so keep the custom domain first.
+    "DASHBOARD_ORIGIN": "https://app.logiclovingmind.com,https://wa-agent-dashboard.pages.dev",
     "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
     // An aggregator, not OpenAI directly — it bills in INR and takes no card, which is
     // the whole reason it is here. OpenAI-compatible: /chat/completions and
