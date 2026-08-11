@@ -1,52 +1,32 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  assertSingleReply,
-  BLOCKED_REPLY,
-  buildMessages,
-  CLOSED_REPLY,
-  checkOutput,
   classifyImage,
-  complete,
   costMicros,
   createOrgDb,
   createServiceClient,
-  FALLBACK_REPLY,
-  flagFromImage,
-  flagFromModel,
+  decideReply,
   HISTORY_LIMIT,
+  HOLD_TEXT,
+  holdFor,
   isWindowOpen,
-  isWithinHours,
   listMedia,
-  MEDIA_REPLY,
   mediaPath,
-  PAUSED_REPLY,
   prefilter,
   putMedia,
   removeMedia,
   SAFE_REPLY,
   signMediaUrl,
-  VIDEO_REPLY,
   windowExpiresAt,
   type Completion,
   type ImageFlags,
+  type OrgControls,
   type OrgDb,
+  type PromptContext,
   type PromptTurn,
   type SafetyKind,
-  type Sector,
 } from "@wa/shared";
 import type { Env } from "../env.js";
 import { downloadMedia, sendTemplate, sendText, type SendTarget } from "../meta.js";
-
-/** The runtime controls of docs/admin-panel.md §3, as they come off the org row. */
-interface OrgControls {
-  name: string;
-  sector: Sector;
-  ai_paused: boolean;
-  cap_micros: number | null;
-  hours_open_ist: string | null;
-  hours_close_ist: string | null;
-  out_of_hours: string;
-}
 
 /** DO alarms retry with backoff; cron does not. That is why debounce lives here. */
 export const DEBOUNCE_MS = 4_000;
@@ -55,9 +35,6 @@ export const DEBOUNCE_MS = 4_000;
 export const HANDOFF_IDLE_MS = 30 * 60 * 1000;
 
 const SEEN_LIMIT = 200;
-
-/** Meta's inbound `type` values that carry an attachment rather than text. */
-const MEDIA_TYPES = new Set(["image", "audio", "video", "document", "sticker"]);
 
 /**
  * How many images in one burst get shown to the classifier. A customer sending twenty
@@ -439,91 +416,34 @@ export class ConversationDO extends DurableObject<Env> {
     types: string[],
     imageIds: string[],
   ): Promise<void> {
-    // The regex prefilter runs before the model and outranks it. A flagged turn never
-    // reaches the LLM at all, so there is no model text to leak.
-    const prefiltered = prefilter(customerText);
-    if (prefiltered) {
-      await this.#sendSafe(anchor, prefiltered);
-      return;
-    }
+    // Deciding lives in shared/reply.ts so the training console can run this exact path
+    // without a send in it. Everything below is the effects half.
+    const verdict = await decideReply(this.env, {
+      customerText,
+      types,
+      imageIds,
+      // Lazy: a prefiltered or media turn must not pay for the KB read.
+      loadContext: () => this.#promptContext(),
+      classifyImages: (ids) => this.#classifyImages(ids),
+    });
 
-    // Media outranks the model but not the prefilter: a caption can still be the thing
-    // that flags the turn, and a flag has to win. Below that, an attachment the model
-    // cannot see is a person's job — answering from the caption alone is a guess.
-    if (types.includes("video")) {
-      await this.#sendAndHandoff(anchor, VIDEO_REPLY);
-      return;
-    }
-    if (types.some((type) => MEDIA_TYPES.has(type))) {
-      // The one detector that can see an attachment. It cannot write a reply — it
-      // returns a flag or nothing — so the customer's message is identical either way
-      // and only the owner's view changes. Voice notes, documents and stickers have no
-      // detector at all and stay unscreened; the inbox says so rather than implying the
-      // prefilter looked.
-      const flagged = flagFromImage(await this.#classifyImages(imageIds));
-      if (flagged) {
-        await this.#sendSafe(anchor, flagged);
+    switch (verdict.action) {
+      case "none":
+        return;
+      case "safe":
+        await this.#sendSafe(anchor, verdict.kind);
+        return;
+      case "handoff":
+        await this.#sendAndHandoff(anchor, verdict.text);
+        return;
+      case "send": {
+        // Billed only when the reply actually went out: a replayed burst where the claim
+        // is already set sends nothing, and must not bill twice.
+        const sent = await this.#send(anchor, verdict.text);
+        if (sent) await this.#recordUsage(verdict.usage);
         return;
       }
-      await this.#sendAndHandoff(anchor, MEDIA_REPLY);
-      return;
     }
-
-    const context = await this.#promptContext();
-    if (!context) return;
-
-    // Paused by the owner, over the monthly cap, or outside business hours. All three
-    // are "a person answers this one", never silence — the customer is owed a reply
-    // whatever the reason we are not writing it with a model.
-    if (context.hold) {
-      await this.#sendAndHandoff(anchor, context.hold);
-      return;
-    }
-
-    let completion;
-    try {
-      completion = await complete(
-        this.env,
-        buildMessages({
-          businessName: context.businessName,
-          sector: context.sector,
-          kb: context.kb,
-          history: context.history,
-          customerText,
-        }),
-      );
-    } catch {
-      // Two timeouts. Never leave the customer with silence.
-      await this.#send(anchor, FALLBACK_REPLY);
-      await this.requestHandoff();
-      return;
-    }
-
-    const flagged = flagFromModel(completion.flags);
-    if (flagged) {
-      await this.#sendSafe(anchor, flagged);
-      return;
-    }
-
-    let reply: string;
-    try {
-      reply = assertSingleReply(completion.reply);
-    } catch {
-      await this.#sendBlocked(anchor);
-      return;
-    }
-
-    // The client's KB can contradict every instruction in the prompt, so the sector
-    // rules are checked here, on the finished text.
-    if (!checkOutput(context.sector, reply).ok) {
-      await this.#sendBlocked(anchor);
-      return;
-    }
-
-    // Billed only when the reply actually went out: a replayed burst where the claim
-    // is already set sends nothing, and must not bill twice.
-    const sent = await this.#send(anchor, reply);
-    if (sent) await this.#recordUsage(completion.usage);
   }
 
   /** A flagged turn gets the constant string, a safety_flags row, and a human. */
@@ -539,10 +459,6 @@ export class ConversationDO extends DurableObject<Env> {
   async #sendAndHandoff(anchor: string, text: string): Promise<void> {
     await this.#send(anchor, text);
     await this.requestHandoff();
-  }
-
-  async #sendBlocked(anchor: string): Promise<void> {
-    await this.#sendAndHandoff(anchor, BLOCKED_REPLY);
   }
 
   /**
@@ -731,14 +647,7 @@ export class ConversationDO extends DurableObject<Env> {
     if (error) throw new Error(`safety_flags insert failed: ${error.message}`);
   }
 
-  async #promptContext(): Promise<{
-    businessName: string;
-    sector: Sector;
-    kb: string;
-    history: PromptTurn[];
-    /** The constant string to send instead of a model reply, or null to answer. */
-    hold: string | null;
-  } | null> {
+  async #promptContext(): Promise<PromptContext | null> {
     const orgId = this.#get("org_id");
     const conversationId = this.#get("conversation_id");
     if (!orgId || !conversationId) return null;
@@ -748,7 +657,10 @@ export class ConversationDO extends DurableObject<Env> {
     // The runtime controls ride on the org row the prompt already needs, so a paused
     // client or one outside its hours costs no extra round trip.
     const { data: orgRow } = await db
-      .organization("name,sector,ai_paused,cap_micros,hours_open_ist,hours_close_ist,out_of_hours")
+      .organization(
+        "name,sector,ai_paused,cap_micros,hours_open_ist,hours_close_ist,out_of_hours," +
+          "voice,reply_max_words,languages",
+      )
       .maybeSingle<OrgControls>();
 
     const hold = await this.#hold(db, orgRow);
@@ -775,6 +687,9 @@ export class ConversationDO extends DurableObject<Env> {
       // recent end.
       history: (history ?? []).slice().reverse(),
       hold: null,
+      voice: orgRow?.voice ?? null,
+      replyMaxWords: orgRow?.reply_max_words ?? null,
+      languages: orgRow?.languages ?? null,
     };
   }
 
@@ -785,28 +700,11 @@ export class ConversationDO extends DurableObject<Env> {
    * conversation goes quiet, and every one of them defaults to today's behaviour.
    */
   async #hold(db: OrgDb, org: OrgControls | null): Promise<string | null> {
-    if (!org) return null;
-
-    if (org.ai_paused) return PAUSED_REPLY;
-
-    if (org.out_of_hours === "handoff") {
-      if (!isWithinHours(new Date(), org.hours_open_ist, org.hours_close_ist)) {
-        return CLOSED_REPLY;
-      }
-    }
-
-    // Only a capped client pays for this, and no client is capped by default. The cap
-    // protects the shared wallet from one org (§8): at the ceiling the conversation
-    // goes to a person rather than stopping, so the client notices before the customer
-    // does.
-    // Loose on purpose: a column PostgREST did not return is as uncapped as a null one.
-    if (org.cap_micros != null) {
+    const reason = await holdFor(org, async () => {
       const { data, error } = await db.monthSpendMicros();
-      if (error) return null; // Never let a failed meter reading silence a client.
-      if (Number(data ?? 0) >= org.cap_micros) return PAUSED_REPLY;
-    }
-
-    return null;
+      return error ? null : Number(data ?? 0);
+    });
+    return reason ? HOLD_TEXT[reason] : null;
   }
 
   async #sendTarget(): Promise<{

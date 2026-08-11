@@ -24,11 +24,27 @@ export {
 } from "./safety.js";
 export type { SafetyKind, ModelFlags, ImageFlags, Sector, OutputVerdict } from "./safety.js";
 
-export { HISTORY_LIMIT, buildSystemPrompt, buildMessages } from "./prompt.js";
+export {
+  HISTORY_LIMIT,
+  DEFAULT_REPLY_MAX_WORDS,
+  buildSystemPrompt,
+  buildMessages,
+} from "./prompt.js";
 export type { ChatMessage, PromptInput, PromptTurn } from "./prompt.js";
 
 export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, classifyImage, costMicros } from "./llm.js";
 export type { LlmEnv, Completion, ImageClassification } from "./llm.js";
+
+export { decideReply, holdFor, HOLD_TEXT } from "./reply.js";
+export type {
+  DecideInput,
+  HoldReason,
+  OrgControls,
+  PromptContext,
+  ReplyStage,
+  ReplyUsage,
+  ReplyVerdict,
+} from "./reply.js";
 
 export {
   MEDIA_BUCKET,
