@@ -12,7 +12,7 @@
     "dev": "pnpm --filter @wa/api run dev",
     "deploy:api": "pnpm --filter @wa/api run deploy",
     "dev:dashboard": "pnpm --filter @wa/dashboard run dev",
-    "deploy:dashboard": "pnpm --filter @wa/dashboard build && wrangler pages deploy dashboard/dist",
+    "deploy:dashboard": "pnpm --filter @wa/dashboard build && pnpm --filter @wa/api exec wrangler pages deploy ../../dashboard/dist --project-name wa-agent-dashboard --branch main",
     "typecheck": "tsc -b --pretty && tsc -p workers/api --pretty && tsc -p dashboard --pretty",
     "lint": "oxlint .",
     "types:worker": "pnpm --filter @wa/api exec wrangler types",

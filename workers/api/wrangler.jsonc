@@ -37,7 +37,11 @@
 
   "vars": {
     "SUPABASE_URL": "https://gtouimwbjfuzgotdqqan.supabase.co",
-    "DASHBOARD_ORIGIN": "http://localhost:5173",
+    // Exactly one origin, and it has to be the one the browser actually shows. When the
+    // dashboard moves to a custom domain this must move with it: reads go straight to
+    // Supabase and keep working, so a stale value here breaks only takeover, erase and
+    // export — which reads as three broken features rather than one wrong string.
+    "DASHBOARD_ORIGIN": "https://wa-agent-dashboard.pages.dev",
     "META_GRAPH_URL": "https://graph.facebook.com/v21.0",
     // An aggregator, not OpenAI directly — it bills in INR and takes no card, which is
     // the whole reason it is here. OpenAI-compatible: /chat/completions and
