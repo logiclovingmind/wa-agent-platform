@@ -28,6 +28,19 @@ const ROW_BUDGET = 400_000;
 const SCRUB_AFTER_HOURS = 24;
 const RETENTION_MONTHS = 12;
 
+/**
+ * Attachments go long before the text does. Storage is 1GB for every client at once,
+ * where the 500MB database is ~5 years of messages — so media is the budget that
+ * actually runs out, and it is the one thing an owner rarely needs a year later.
+ */
+const MEDIA_RETENTION_DAYS = 30;
+
+/**
+ * free-tier.md: 1GB Storage. 800MB leaves room for a month of intake to land before
+ * the next retention pass, so this fires with time to act rather than at the wall.
+ */
+const STORAGE_ALARM_BYTES = 800 * 1024 * 1024;
+
 export async function scheduled(
   controller: ScheduledController,
   env: Env,
@@ -76,12 +89,20 @@ async function usageCheck(env: Env): Promise<void> {
   const total = await sb.from("messages").select("id", { count: "exact", head: true });
   if (total.error) throw new Error(`total message count failed: ${total.error.message}`);
 
+  // Metadata only, so the job that guards egress does not spend it.
+  const stored = await sb.rpc("media_bytes");
+  if (stored.error) throw new Error(`media bytes lookup failed: ${stored.error.message}`);
+
   const requests = (daily.count ?? 0) * REQUESTS_PER_MESSAGE;
   const rows = total.count ?? 0;
+  const bytes = Number(stored.data ?? 0);
 
   const breaches: string[] = [];
   if (requests > DAILY_REQUEST_BUDGET) breaches.push(`~${requests} requests/day`);
   if (rows > ROW_BUDGET) breaches.push(`${rows} message rows`);
+  if (bytes > STORAGE_ALARM_BYTES) {
+    breaches.push(`${Math.round(bytes / (1024 * 1024))}MB of 1GB media storage`);
+  }
 
   if (breaches.length > 0) {
     throw new Error(`free-tier upgrade trigger: ${breaches.join(", ")}`);
@@ -167,8 +188,40 @@ async function deleteExpired(env: Env): Promise<void> {
   if (error) throw new Error(`retention delete failed: ${error.message}`);
 }
 
+/**
+ * Drops attachments at 30 days while their text stays the full 12 months. The message,
+ * its timestamps and its caption survive — only the bytes go, because the bytes are the
+ * only part that competes for a 1GB bucket shared by every client.
+ *
+ * Cross-org like the sweeps above, and idempotent: the not-null guard skips rows whose
+ * media has already gone.
+ */
+async function scrubExpiredMedia(env: Env): Promise<void> {
+  const cutoff = new Date(Date.now() - MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const sb = createServiceClient(env);
+
+  const keys = await sb
+    .from("messages")
+    .select("media_key")
+    .lt("created_at", cutoff)
+    .not("media_key", "is", null);
+  if (keys.error) throw new Error(`expired media lookup failed: ${keys.error.message}`);
+  if (keys.data.length === 0) return;
+
+  // Objects first, then the rows — same reason as the scrub above.
+  await removeMedia(env, keys.data.map((row) => row.media_key as string));
+
+  const { error } = await sb
+    .from("messages")
+    .update({ media_key: null })
+    .lt("created_at", cutoff)
+    .not("media_key", "is", null);
+  if (error) throw new Error(`media retention update failed: ${error.message}`);
+}
+
 async function retentionDelete(env: Env): Promise<void> {
   await scrubFlaggedContent(env);
+  await scrubExpiredMedia(env);
   await deleteExpired(env);
 }
 

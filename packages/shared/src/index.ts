@@ -11,6 +11,8 @@ export {
   SAFE_REPLY,
   FALLBACK_REPLY,
   BLOCKED_REPLY,
+  MEDIA_REPLY,
+  VIDEO_REPLY,
   SECTORS,
   prefilter,
   flagFromModel,

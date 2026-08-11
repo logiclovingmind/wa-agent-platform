@@ -38,10 +38,15 @@ describe("scheduled", () => {
     const calls = stub();
     await fire("0 20 * * *");
 
-    expect(calls).toHaveLength(2);
     // head requests: the count comes back in a header, so a daily job costs no egress.
-    expect(calls.every((c) => c.method === "HEAD" && c.table === "messages")).toBe(true);
-    expect(calls.some((c) => c.url.searchParams.get("created_at")?.startsWith("gte."))).toBe(true);
+    const counts = calls.filter((c) => c.method === "HEAD");
+    expect(counts).toHaveLength(2);
+    expect(counts.every((c) => c.table === "messages")).toBe(true);
+    expect(counts.some((c) => c.url.searchParams.get("created_at")?.startsWith("gte."))).toBe(true);
+
+    // Storage has no count to HEAD, so the 1GB check is an rpc that sums metadata.
+    expect(calls.filter((c) => c.table === "rpc/media_bytes")).toHaveLength(1);
+    expect(calls).toHaveLength(3);
   });
 
   it("scrubs flagged content and deletes expired rows on the retention trigger", async () => {

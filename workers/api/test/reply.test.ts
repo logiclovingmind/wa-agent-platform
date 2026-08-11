@@ -2,7 +2,9 @@ import { env, runDurableObjectAlarm } from "cloudflare:test";
 import {
   BLOCKED_REPLY,
   FALLBACK_REPLY,
+  MEDIA_REPLY,
   SAFE_REPLY,
+  VIDEO_REPLY,
   type ModelFlags,
   type Sector,
 } from "@wa/shared";
@@ -300,5 +302,39 @@ describe("reply path", () => {
     expect(h.templates).toHaveLength(1);
     // Same claim that guards a normal reply: templates cost money per send.
     expect(await h.conv.claimReply("wamid.t3")).toBe(false);
+  });
+
+  it("hands an attachment to a person rather than guessing from its caption", async () => {
+    const h = await harness("reply-media");
+    await h.conv.onInbound({ ...inbound("wamid.p1", "is this the right one?"), type: "image" });
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([MEDIA_REPLY]);
+    // The model never sees the bytes, so calling it at all would be paying to guess.
+    expect(h.llm).toEqual([]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("asks for a photo instead of a video", async () => {
+    const h = await harness("reply-video");
+    await h.conv.onInbound({ ...inbound("wamid.v1", "see the leak"), type: "video" });
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([VIDEO_REPLY]);
+    expect(h.llm).toEqual([]);
+  });
+
+  it("lets the prefilter outrank the attachment handoff", async () => {
+    const h = await harness("reply-media-flagged");
+    // A caption is still customer text. If media short-circuited first, a flagged turn
+    // would get the ordinary handoff line and no safety_flags row.
+    await h.conv.onInbound({
+      ...inbound("wamid.p2", "i am in 10th standard, is this ok"),
+      type: "image",
+    });
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([SAFE_REPLY.minor]);
+    expect(h.rest.some((c) => c.table.startsWith("safety_flags"))).toBe(true);
   });
 });

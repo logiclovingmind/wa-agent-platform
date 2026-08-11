@@ -11,6 +11,13 @@
 | Supabase Realtime | concurrent connections + monthly messages | One leaked subscription per open tab burns this |
 | Supabase project | pauses after ~7 days inactivity | Bites in the pre-client gap, not production |
 | **Supabase Storage** | **1GB, and reads come out of the same 5GB egress** | Media shares the budget the dashboard is already spending. R2 is the right home and is not usable — enabling it needs a payment method this account does not have |
+
+**Media retention is 30 days, not the 12 months text gets.** 1GB is shared by every
+client at once, and one 16MB video costs as much of it as a hundred photos — so video
+is rejected at the webhook and never fetched, and attachments are dropped at 30 days
+while their captions and timestamps stay the full 12 months. The daily usage cron
+alarms at 800MB via the `media_bytes()` function, since nothing else we hold reports
+bucket size.
 | Cloudflare Pages | build minutes | Only matters if CI rebuilds on every push |
 | GitHub Actions | free minutes on private repos | The backup job is small but not free forever |
 | Subrequests | 50/request | Each `fetch` counts; a fan-out loop hits this fast |

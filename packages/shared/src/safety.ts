@@ -34,6 +34,21 @@ export const FALLBACK_REPLY =
 export const BLOCKED_REPLY =
   "Let me get someone from the team to confirm that for you.";
 
+/**
+ * v1 stores media but does not interpret it: the model never sees the bytes, only the
+ * caption. Answering from a caption alone is a guess, so the turn goes to a person —
+ * and says so, rather than leaving the customer waiting on a reply that never comes.
+ */
+export const MEDIA_REPLY =
+  "Thanks — I've passed this on to someone from our team, and they'll reply here shortly.";
+
+/**
+ * Video is never fetched or stored. One 16MB clip costs as much of the shared 1GB
+ * bucket as a hundred photos, and v1 could not interpret it anyway.
+ */
+export const VIDEO_REPLY =
+  "I can't open videos here. Please send a photo or describe it in a message, and someone from our team will help.";
+
 // English only today. Hindi/Kannada/Hinglish need their own list, not a translation
 // of this one.
 const MINOR_PATTERNS: RegExp[] = [

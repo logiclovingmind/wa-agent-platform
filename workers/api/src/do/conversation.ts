@@ -13,11 +13,13 @@ import {
   HISTORY_LIMIT,
   isWindowOpen,
   listMedia,
+  MEDIA_REPLY,
   mediaPath,
   prefilter,
   putMedia,
   removeMedia,
   SAFE_REPLY,
+  VIDEO_REPLY,
   windowExpiresAt,
   type Completion,
   type OrgDb,
@@ -35,6 +37,9 @@ export const DEBOUNCE_MS = 4_000;
 export const HANDOFF_IDLE_MS = 30 * 60 * 1000;
 
 const SEEN_LIMIT = 200;
+
+/** Meta's inbound `type` values that carry an attachment rather than text. */
+const MEDIA_TYPES = new Set(["image", "audio", "video", "document", "sticker"]);
 
 export type HandoffState = "bot" | "requested" | "human" | "returned";
 
@@ -376,17 +381,29 @@ export class ConversationDO extends DurableObject<Env> {
       return;
     }
 
-    await this.#reply(anchor, customerText);
+    await this.#reply(anchor, customerText, batch.map((row) => row["type"] as string));
   }
 
   // --- reply path ------------------------------------------------------------
 
-  async #reply(anchor: string, customerText: string): Promise<void> {
+  async #reply(anchor: string, customerText: string, types: string[]): Promise<void> {
     // The regex prefilter runs before the model and outranks it. A flagged turn never
     // reaches the LLM at all, so there is no model text to leak.
     const prefiltered = prefilter(customerText);
     if (prefiltered) {
       await this.#sendSafe(anchor, prefiltered);
+      return;
+    }
+
+    // Media outranks the model but not the prefilter: a caption can still be the thing
+    // that flags the turn, and a flag has to win. Below that, an attachment the model
+    // cannot see is a person's job — answering from the caption alone is a guess.
+    if (types.includes("video")) {
+      await this.#sendAndHandoff(anchor, VIDEO_REPLY);
+      return;
+    }
+    if (types.some((type) => MEDIA_TYPES.has(type))) {
+      await this.#sendAndHandoff(anchor, MEDIA_REPLY);
       return;
     }
 
@@ -448,9 +465,14 @@ export class ConversationDO extends DurableObject<Env> {
     await this.requestHandoff();
   }
 
-  async #sendBlocked(anchor: string): Promise<void> {
-    await this.#send(anchor, BLOCKED_REPLY);
+  /** A constant string and a person, with no safety_flags row: not every handoff is a flag. */
+  async #sendAndHandoff(anchor: string, text: string): Promise<void> {
+    await this.#send(anchor, text);
     await this.requestHandoff();
+  }
+
+  async #sendBlocked(anchor: string): Promise<void> {
+    await this.#sendAndHandoff(anchor, BLOCKED_REPLY);
   }
 
   /**

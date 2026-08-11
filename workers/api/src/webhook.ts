@@ -89,7 +89,10 @@ function extractInbound(raw: string, account: WaAccountRoute): InboundMessage[] 
           // A caption is the only text a media message carries, and it is what the
           // model gets to see — the bytes themselves never reach the prompt.
           body: msg.text?.body ?? media?.caption ?? null,
-          mediaId: media?.id ?? null,
+          // No media id means nothing is downloaded or stored. Video is dropped here
+          // rather than in the DO so the bytes never touch the 1GB bucket at all; the
+          // caption still comes through, and the DO answers with VIDEO_REPLY.
+          mediaId: msg.type === "video" ? null : (media?.id ?? null),
           sentAt: parseMetaTimestamp(msg.timestamp ?? "0").getTime(),
         });
       }
