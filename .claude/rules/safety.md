@@ -8,7 +8,7 @@ paths:
 
 ## Detection
 
-**No second LLM call.** The main completion returns structured JSON:
+**No second LLM call on a text turn.** The main completion returns structured JSON:
 
 ```json
 { "reply": "...", "flags": { "minor": false, "distress": false, "out_of_scope": false } }
@@ -17,6 +17,34 @@ paths:
 Plus a **hardcoded regex prefilter** that runs before the model and can flag on its
 own. The prefilter is authoritative: if it fires, the model's reply is discarded
 regardless of what the model returned.
+
+### Images — the one extra call
+
+The prefilter is text-only, so an attachment used to arrive completely unscreened. A
+media turn always hands off to a person, so nothing unsafe was ever *sent* — but
+nothing was *detected* either, and detection is what retention and the owner's view
+run on.
+
+Images now get one `classifyImage()` call (`packages/shared/src/llm.ts`), which is
+bound by three rules:
+
+1. **It returns booleans, never prose.** Nothing it produces can become a message. The
+   customer still gets `MEDIA_REPLY` and a human, byte for byte.
+2. **It must not throw.** It runs *before* the send, so an exception would leave the
+   customer with silence and the alarm would retry before the reply claim is set and
+   send twice. Every failure returns `null` and falls through to the ordinary handoff.
+3. **The prefilter still outranks it.** A caption that flags never reaches it, so a
+   flagged turn costs no model call.
+
+The image goes to the provider as a short-lived **signed Storage URL**, not as base64:
+reading the bytes in to encode them is CPU against the 10ms budget, and the provider
+fetching directly costs egress instead.
+
+Audio, documents and stickers have **no detector and are not getting one** —
+transcription is a second model and puts every voice note across the border. They are
+recorded as unscreened (`messages.safety_screened`) so the inbox says so rather than
+implying the prefilter looked. Never infer "screened" from the message type: an image
+whose classification timed out is exactly as unscreened as a voice note.
 
 Any flag set → **discard `reply` entirely**, send the corresponding constant string,
 write a row to `safety_flags`.

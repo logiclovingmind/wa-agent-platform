@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase, type DailyUsage } from "./lib/supabase";
-import { walletBalance } from "./lib/api";
 import { inr, istToday, shiftDay } from "./lib/utils";
 
 /** Two months, so "last month" is always complete however late in the month it is. */
@@ -13,10 +12,9 @@ const CHART_DAYS = 30;
  * numbers, and Supabase egress is the shared budget that takes every client down at
  * once when it runs out.
  */
-export default function Usage({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
+export default function Usage() {
   const [rows, setRows] = useState<DailyUsage[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [balance, setBalance] = useState<number | null>(null);
 
   useEffect(() => {
     void load();
@@ -29,8 +27,6 @@ export default function Usage({ isPlatformAdmin }: { isPlatformAdmin: boolean })
     // otherwise, and "₹0.00" is a claim we should not make when we do not know.
     setLoadError(error ? error.message : null);
     setRows((data ?? []) as DailyUsage[]);
-
-    if (isPlatformAdmin) setBalance(await walletBalance().catch(() => null));
   }
 
   const today = istToday();
@@ -45,12 +41,10 @@ export default function Usage({ isPlatformAdmin }: { isPlatformAdmin: boolean })
   const monthReplies = sum((r) => r.events, (r) => r.day.startsWith(thisMonth));
   const lastMonthCost = sum((r) => r.cost_micros, (r) => r.day.startsWith(lastMonth));
 
-  // A week is the shortest window that survives one quiet Sunday, and runway in days is
-  // the only form of this number anyone acts on.
+  // A week is the shortest window that survives one quiet Sunday.
   const weekStart = shiftDay(today, -6);
   const weekCost = sum((r) => r.cost_micros, (r) => r.day >= weekStart);
   const burnPerDay = weekCost / 7 / 1_000_000;
-  const runwayDays = balance !== null && burnPerDay > 0 ? Math.floor(balance / burnPerDay) : null;
 
   const chart = Array.from({ length: CHART_DAYS }, (_, i) => {
     const day = shiftDay(today, i - (CHART_DAYS - 1));
@@ -90,21 +84,8 @@ export default function Usage({ isPlatformAdmin }: { isPlatformAdmin: boolean })
         />
       </div>
 
-      {isPlatformAdmin && (
-        <div className="mb-8 rounded border border-border p-4">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            LLM wallet — platform-wide
-          </div>
-          <div className="mt-1 text-2xl font-semibold">
-            {balance === null ? "unavailable" : `₹${balance.toFixed(2)}`}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {runwayDays !== null
-              ? `About ${runwayDays} days left at the last 7 days' rate. Funds every client, not just this one.`
-              : "Funds every client, not just this one. Top it up before it reaches zero — every org stops replying at once."}
-          </p>
-        </div>
-      )}
+      {/* The platform wallet used to sit here. It moved to the all-clients screen: one
+          wallet funds every client, so it is our number and not this org's. */}
 
       <div className="rounded border border-border p-4">
         <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">

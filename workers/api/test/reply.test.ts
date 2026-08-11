@@ -5,6 +5,7 @@ import {
   MEDIA_REPLY,
   SAFE_REPLY,
   VIDEO_REPLY,
+  type ImageFlags,
   type ModelFlags,
   type Sector,
 } from "@wa/shared";
@@ -26,18 +27,24 @@ interface Scenario {
   llmDown?: boolean;
   /** An approved re-engagement template on the wa_account, or none configured. */
   template?: { name: string; lang: string };
+  /** What the image classifier reports back. Absent keys read as false. */
+  imageFlags?: Partial<ImageFlags>;
+  /** The classifier alone is unreachable; the reply model still answers. */
+  classifierDown?: boolean;
 }
 
 interface Harness {
   rest: RestCall[];
   llm: Array<{ system: string; turns: Array<{ role: string; content: string }> }>;
+  /** One entry per image actually shown to the classifier, as the URL it was given. */
+  classified: string[];
   sent: string[];
   templates: Array<{ name: string; language: string }>;
 }
 
 async function harness(name: string, scenario: Scenario = {}) {
   const token = await encryptUnderMasterKey("meta-token");
-  const out: Harness = { rest: [], llm: [], sent: [], templates: [] };
+  const out: Harness = { rest: [], llm: [], classified: [], sent: [], templates: [] };
 
   out.rest = stubSupabase(
     (call) => {
@@ -67,11 +74,40 @@ async function harness(name: string, scenario: Scenario = {}) {
     },
     async (req, url) => {
       if (url.hostname === "llm.test") {
-        if (scenario.llmDown) return new Response("upstream", { status: 502 });
         const body = (await req.json()) as {
-          messages: Array<{ role: string; content: string }>;
+          messages: Array<{ role: string; content: unknown }>;
         };
-        out.llm.push({ system: body.messages[0]!.content, turns: body.messages });
+
+        // The classifier is the one call whose user turn is a content array rather than
+        // a string — that is what carries the image part, and it is how the two model
+        // calls are told apart here.
+        const image = body.messages[1]?.content;
+        if (Array.isArray(image)) {
+          if (scenario.classifierDown) return new Response("upstream", { status: 502 });
+          const part = image[0] as { image_url?: { url?: string } };
+          out.classified.push(part.image_url?.url ?? "");
+          return Response.json({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    minor: false,
+                    distress: false,
+                    abuse: false,
+                    ...scenario.imageFlags,
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 200, completion_tokens: 10 },
+          });
+        }
+
+        if (scenario.llmDown) return new Response("upstream", { status: 502 });
+        out.llm.push({
+          system: body.messages[0]!.content as string,
+          turns: body.messages as Array<{ role: string; content: string }>,
+        });
         return Response.json({
           choices: [
             {
@@ -86,6 +122,14 @@ async function harness(name: string, scenario: Scenario = {}) {
           usage: { prompt_tokens: 100, completion_tokens: 20 },
         });
       }
+
+      // Media download hop 1: the Graph id resolves to a short-lived CDN URL.
+      if (url.hostname === "graph.test" && req.method === "GET") {
+        return Response.json({ url: "https://lookaside.test/blob", mime_type: "image/jpeg" });
+      }
+      // Hop 2: the bytes, which land in the fake bucket and are what the signed URL
+      // handed to the classifier then points at.
+      if (url.hostname === "lookaside.test") return new Response("JPEGBYTES");
 
       if (url.hostname === "graph.test") {
         const body = (await req.json()) as {
@@ -310,8 +354,10 @@ describe("reply path", () => {
     await flush(h.conv);
 
     expect(h.sent).toEqual([MEDIA_REPLY]);
-    // The model never sees the bytes, so calling it at all would be paying to guess.
+    // No media id, so nothing was stored and there is nothing to classify. What matters
+    // is that the *reply* model is never asked — answering from a caption is a guess.
     expect(h.llm).toEqual([]);
+    expect(h.classified).toEqual([]);
     expect((await h.conv.getState()).handoff).toBe("requested");
   });
 
@@ -336,5 +382,87 @@ describe("reply path", () => {
 
     expect(h.sent).toEqual([SAFE_REPLY.minor]);
     expect(h.rest.some((c) => c.table.startsWith("safety_flags"))).toBe(true);
+  });
+});
+
+/**
+ * The prefilter is text-only, so before this an image arrived unscreened: the turn was
+ * handed to a person (safe) with no flag written (undetected), which is what retention
+ * and the owner's view both run on.
+ */
+describe("image safety classification", () => {
+  const image = (waMessageId: string, caption: string): InboundMessage => ({
+    ...inbound(waMessageId, caption),
+    type: "image",
+    mediaId: "MEDIA1",
+  });
+
+  it("screens a stored image and still hands it to a person", async () => {
+    const h = await harness("classify-clean");
+    await h.conv.onInbound(image("wamid.c1", "is this the right part?"));
+    await flush(h.conv);
+
+    // The classifier saw the object through a signed URL — not the Meta CDN link, which
+    // expires in minutes and needs a bearer token the provider does not have.
+    expect(h.classified).toHaveLength(1);
+    expect(h.classified[0]).toContain(`/object/sign/media/${ORG}/${CONVERSATION}/wamid.c1`);
+
+    // Nothing about the customer's experience changed: same constant, same handoff.
+    expect(h.sent).toEqual([MEDIA_REPLY]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+    expect(h.rest.some((c) => c.table.startsWith("safety_flags"))).toBe(false);
+
+    // A real call against the same wallet, so it has to show up on the cost screen.
+    const usage = h.rest
+      .filter((c) => c.table.startsWith("usage_events"))
+      .flatMap((c) => c.body as Array<Record<string, unknown>>);
+    expect(usage).toHaveLength(1);
+    // 200 * 14 + 10 * 57 = 3370 micro-INR.
+    expect(usage[0]).toMatchObject({ pricing_category: "image_safety", cost_micros: 3370 });
+
+    // And the inbox can now say the image was actually looked at.
+    const screened = h.rest.find(
+      (c) => c.table.startsWith("messages") && c.method === "PATCH",
+    );
+    expect(screened?.body).toMatchObject({ safety_screened: true });
+  });
+
+  it("flags what the text prefilter cannot see", async () => {
+    // A school ID card with a caption that says nothing. Before the classifier this was
+    // MEDIA_REPLY and no flag at all.
+    const h = await harness("classify-minor", { imageFlags: { minor: true } });
+    await h.conv.onInbound(image("wamid.c2", "here"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([SAFE_REPLY.minor]);
+    expect(h.rest.some((c) => c.table.startsWith("safety_flags"))).toBe(true);
+    // Invariant 11: the AI stops, with no auto-resume.
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  it("falls back to the ordinary handoff when the classifier is unreachable", async () => {
+    const h = await harness("classify-down", { classifierDown: true });
+    await h.conv.onInbound(image("wamid.c3", "look at this"));
+    await flush(h.conv);
+
+    // The classifier runs before the send, so a throw there would have cost the customer
+    // the reply entirely — and the alarm would retry and send twice.
+    expect(h.sent).toEqual([MEDIA_REPLY]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+    // Unscreened, and recorded as unscreened: no PATCH claiming otherwise.
+    expect(
+      h.rest.some((c) => c.table.startsWith("messages") && c.method === "PATCH"),
+    ).toBe(false);
+  });
+
+  it("lets the caption prefilter outrank the classifier", async () => {
+    // The classifier would say "nothing here"; the caption says otherwise. The cheap,
+    // deterministic detector has to win, and win without paying for a model call.
+    const h = await harness("classify-prefilter");
+    await h.conv.onInbound(image("wamid.c4", "i want to die"));
+    await flush(h.conv);
+
+    expect(h.sent).toEqual([SAFE_REPLY.self_harm]);
+    expect(h.classified).toEqual([]);
   });
 });

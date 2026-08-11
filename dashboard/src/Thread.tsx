@@ -15,7 +15,7 @@ import { cn, ist, useNow, windowLeft } from "./lib/utils";
 
 /** Invariant 7. Also the egress budget: a thousand-message thread is 5GB in a few opens. */
 const PAGE = 20;
-const COLUMNS = "id,direction,body,type,media_key,created_at,status";
+const COLUMNS = "id,direction,body,type,media_key,safety_screened,created_at,status";
 
 /**
  * Keyed by id so the same row arriving twice collapses to one. StrictMode mounts the
@@ -316,6 +316,15 @@ export default function Thread({
                   message={m}
                   url={m.media_key ? mediaUrls.get(m.media_key) : undefined}
                 />
+                {/* Read off the row, never inferred from the type: an image whose
+                    classification failed is as unscreened as a voice note, and a badge
+                    that guessed would call it checked. Inbound only — an outbound
+                    attachment is something we sent. */}
+                {m.direction === "inbound" && !m.safety_screened && (
+                  <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-amber-600">
+                    Not screened — read it yourself
+                  </div>
+                )}
               </div>
             )}
             {m.body && <div className="whitespace-pre-wrap">{m.body}</div>}

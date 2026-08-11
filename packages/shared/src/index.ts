@@ -16,18 +16,26 @@ export {
   SECTORS,
   prefilter,
   flagFromModel,
+  flagFromImage,
   checkOutput,
   assertSingleReply,
 } from "./safety.js";
-export type { SafetyKind, ModelFlags, Sector, OutputVerdict } from "./safety.js";
+export type { SafetyKind, ModelFlags, ImageFlags, Sector, OutputVerdict } from "./safety.js";
 
 export { HISTORY_LIMIT, buildSystemPrompt, buildMessages } from "./prompt.js";
 export type { ChatMessage, PromptInput, PromptTurn } from "./prompt.js";
 
-export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, costMicros } from "./llm.js";
-export type { LlmEnv, Completion } from "./llm.js";
+export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, classifyImage, costMicros } from "./llm.js";
+export type { LlmEnv, Completion, ImageClassification } from "./llm.js";
 
-export { MEDIA_BUCKET, mediaPath, putMedia, removeMedia, listMedia } from "./storage.js";
+export {
+  MEDIA_BUCKET,
+  mediaPath,
+  putMedia,
+  signMediaUrl,
+  removeMedia,
+  listMedia,
+} from "./storage.js";
 export type { StorageEnv } from "./storage.js";
 
 export {

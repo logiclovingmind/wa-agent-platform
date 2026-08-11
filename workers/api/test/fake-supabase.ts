@@ -20,8 +20,17 @@ export const storedMedia = new Map<string, { body: string; contentType: string }
 
 const OBJECT_PREFIX = "/storage/v1/object/media/";
 const LIST_PATH = "/storage/v1/object/list/media";
+const SIGN_PREFIX = "/storage/v1/object/sign/media/";
 
 async function storage(req: Request, url: URL): Promise<Response> {
+  // Signing an object that was never stored has to 404, not hand back a URL: "the copy
+  // to Storage failed" is the main way the image classifier finds nothing to look at.
+  if (req.method === "POST" && url.pathname.startsWith(SIGN_PREFIX)) {
+    const path = url.pathname.slice(SIGN_PREFIX.length);
+    if (!storedMedia.has(path)) return new Response("not found", { status: 404 });
+    return Response.json({ signedURL: `/object/sign/media/${path}?token=test-signed` });
+  }
+
   if (req.method === "POST" && url.pathname === LIST_PATH) {
     const { prefix } = (await req.json()) as { prefix: string };
     const names = [...storedMedia.keys()]

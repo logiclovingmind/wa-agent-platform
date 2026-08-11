@@ -4,11 +4,13 @@ import {
   BLOCKED_REPLY,
   buildMessages,
   checkOutput,
+  classifyImage,
   complete,
   costMicros,
   createOrgDb,
   createServiceClient,
   FALLBACK_REPLY,
+  flagFromImage,
   flagFromModel,
   HISTORY_LIMIT,
   isWindowOpen,
@@ -19,9 +21,11 @@ import {
   putMedia,
   removeMedia,
   SAFE_REPLY,
+  signMediaUrl,
   VIDEO_REPLY,
   windowExpiresAt,
   type Completion,
+  type ImageFlags,
   type OrgDb,
   type PromptTurn,
   type SafetyKind,
@@ -40,6 +44,17 @@ const SEEN_LIMIT = 200;
 
 /** Meta's inbound `type` values that carry an attachment rather than text. */
 const MEDIA_TYPES = new Set(["image", "audio", "video", "document", "sticker"]);
+
+/**
+ * How many images in one burst get shown to the classifier. A customer sending twenty
+ * photos would otherwise buy twenty model calls and twenty round trips before the
+ * constant reply goes out. The turn hands off to a person either way, so the cap costs
+ * detection on the tail of a burst, not safety.
+ */
+const CLASSIFY_LIMIT = 3;
+
+/** Long enough for the provider to fetch the image once, short enough to be useless later. */
+const CLASSIFY_URL_TTL_S = 300;
 
 export type HandoffState = "bot" | "requested" | "human" | "returned";
 
@@ -390,12 +405,26 @@ export class ConversationDO extends DurableObject<Env> {
       return;
     }
 
-    await this.#reply(anchor, customerText, batch.map((row) => row["type"] as string));
+    await this.#reply(
+      anchor,
+      customerText,
+      batch.map((row) => row["type"] as string),
+      // Image ids, not the whole batch: the classifier is the only thing downstream that
+      // needs to name an individual message, and only images can be classified.
+      batch
+        .filter((row) => row["type"] === "image")
+        .map((row) => row["wa_message_id"] as string),
+    );
   }
 
   // --- reply path ------------------------------------------------------------
 
-  async #reply(anchor: string, customerText: string, types: string[]): Promise<void> {
+  async #reply(
+    anchor: string,
+    customerText: string,
+    types: string[],
+    imageIds: string[],
+  ): Promise<void> {
     // The regex prefilter runs before the model and outranks it. A flagged turn never
     // reaches the LLM at all, so there is no model text to leak.
     const prefiltered = prefilter(customerText);
@@ -412,6 +441,16 @@ export class ConversationDO extends DurableObject<Env> {
       return;
     }
     if (types.some((type) => MEDIA_TYPES.has(type))) {
+      // The one detector that can see an attachment. It cannot write a reply — it
+      // returns a flag or nothing — so the customer's message is identical either way
+      // and only the owner's view changes. Voice notes, documents and stickers have no
+      // detector at all and stay unscreened; the inbox says so rather than implying the
+      // prefilter looked.
+      const flagged = flagFromImage(await this.#classifyImages(imageIds));
+      if (flagged) {
+        await this.#sendSafe(anchor, flagged);
+        return;
+      }
       await this.#sendAndHandoff(anchor, MEDIA_REPLY);
       return;
     }
@@ -482,6 +521,67 @@ export class ConversationDO extends DurableObject<Env> {
 
   async #sendBlocked(anchor: string): Promise<void> {
     await this.#sendAndHandoff(anchor, BLOCKED_REPLY);
+  }
+
+  /**
+   * Shows each image in the burst to the classifier and returns the first thing it saw.
+   *
+   * Nothing in here may throw. It runs *before* the send, so an exception would abort
+   * the turn and leave the customer with silence — and the alarm would retry it, before
+   * the reply claim is set, and send twice. A missing object (the copy to Storage
+   * failed), an unreachable provider, or a malformed answer therefore all read the same
+   * way: not screened, fall through to the ordinary media handoff. The classifier can
+   * only ever add a flag; it can never remove a reply.
+   */
+  async #classifyImages(imageIds: string[]): Promise<ImageFlags | null> {
+    const orgId = this.#get("org_id");
+    const conversationId = this.#get("conversation_id");
+    if (!orgId || !conversationId || imageIds.length === 0) return null;
+
+    const screened: string[] = [];
+    let seen: ImageFlags | null = null;
+
+    for (const waMessageId of imageIds.slice(0, CLASSIFY_LIMIT)) {
+      try {
+        const url = await signMediaUrl(
+          this.env,
+          mediaPath(orgId, conversationId, waMessageId),
+          CLASSIFY_URL_TTL_S,
+        );
+        if (!url) continue;
+
+        const result = await classifyImage(this.env, url);
+        if (!result) continue;
+
+        screened.push(waMessageId);
+        // A real call against the same wallet as a reply. A cost screen that omitted it
+        // would under-report what an image-heavy client costs, which is the number the
+        // whole Usage tab exists to get right.
+        await this.#recordUsage(result.usage, "image_safety");
+
+        if (result.flags.minor || result.flags.distress || result.flags.abuse) {
+          seen = result.flags;
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (screened.length > 0) {
+      // Records what was actually looked at, so the inbox badge is a fact rather than an
+      // inference from the message type — an image whose classification failed is
+      // unscreened in exactly the way a voice note is, and should read that way.
+      try {
+        await createOrgDb(this.env, orgId)
+          .update("messages", { safety_screened: true })
+          .in("wa_message_id", screened);
+      } catch {
+        // The flag, if there was one, matters more than the badge.
+      }
+    }
+
+    return seen;
   }
 
   /**
@@ -577,17 +677,21 @@ export class ConversationDO extends DurableObject<Env> {
     return true;
   }
 
-  /** The model spend behind one reply. Runs only after the send, so billing never
-   *  holds up the customer, and only for LLM replies — the constant safety strings
-   *  and human sends cost nothing. */
-  async #recordUsage(usage: Completion["usage"]): Promise<void> {
+  /** The model spend behind one turn. `reply` runs only after the send, so billing
+   *  never holds up the customer; `image_safety` is the classifier, which is the one
+   *  model call that happens on a turn the customer gets a constant string for. The
+   *  constant safety strings and human sends themselves cost nothing. */
+  async #recordUsage(
+    usage: Completion["usage"],
+    category: "reply" | "image_safety" = "reply",
+  ): Promise<void> {
     const orgId = this.#get("org_id");
     const conversationId = this.#get("conversation_id");
     if (!orgId || !conversationId) return;
 
     const { error } = await createOrgDb(this.env, orgId).insert("usage_events", {
       conversation_id: conversationId,
-      pricing_category: "reply",
+      pricing_category: category,
       cost_micros: costMicros(usage),
     });
     if (error) throw new Error(`usage_events insert failed: ${error.message}`);

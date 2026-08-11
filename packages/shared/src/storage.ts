@@ -49,6 +49,36 @@ export async function putMedia(
   return res.ok ? path : null;
 }
 
+/**
+ * A short-lived URL an outside service can GET once. Used to hand an inbound image to
+ * the safety classifier without the bytes passing through the Worker — reading them in
+ * to base64 them would be CPU against the 10ms budget, and the point of the raw-fetch
+ * design above is that media is never buffered.
+ *
+ * The provider fetches straight from Supabase, so each classified image is counted
+ * against the 5GB/mo egress budget once. Expiry is minutes, not hours: the URL carries
+ * its own bearer token in the query string and is the one place a private object is
+ * reachable without a key.
+ */
+export async function signMediaUrl(
+  env: StorageEnv,
+  path: string,
+  expiresInSeconds: number,
+): Promise<string | null> {
+  const res = await fetch(`${env.SUPABASE_URL}/storage/v1/object/sign/${MEDIA_BUCKET}/${path}`, {
+    method: "POST",
+    headers: { ...headers(env), "content-type": "application/json" },
+    body: JSON.stringify({ expiresIn: expiresInSeconds }),
+  });
+  if (!res.ok) return null;
+
+  const body = (await res.json()) as { signedURL?: string };
+  if (!body.signedURL) return null;
+  // Storage answers with a path relative to /storage/v1 and a leading slash, so this is
+  // concatenation — `new URL()` would resolve it against the origin and drop the prefix.
+  return `${env.SUPABASE_URL}/storage/v1${body.signedURL}`;
+}
+
 const PAGE = 1000;
 
 /** Bulk delete. Storage takes the paths in the body, so one call covers a whole page. */

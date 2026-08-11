@@ -209,17 +209,30 @@ describe("POST /webhook/:slug", () => {
   });
 
   it("429s a client over its burst cap instead of dropping the message", async () => {
-    stub(await account());
+    const calls = stub(await account());
 
-    let last = new Response(null, { status: 200 });
-    for (let i = 0; i < 40 && last.status === 200; i++) {
-      const body = messagePayload(`wamid.FLOOD${i}`);
-      last = await post(body, await sign(body));
+    // The binding is stubbed rather than genuinely flooded. The real limiter is a
+    // 30-per-60s window, so draining it costs wall-clock time, and under the full suite
+    // this machine is slow enough that the window refilled part-way through the old
+    // 40-request loop — the flood never tripped and the test failed only in parallel.
+    // The branch is ours to test; Cloudflare's arithmetic is not.
+    const real = env.ORG_LIMITER;
+    env.ORG_LIMITER = { limit: async () => ({ success: false }) } as typeof env.ORG_LIMITER;
+
+    try {
+      const body = messagePayload("wamid.FLOOD");
+      const res = await post(body, await sign(body));
+
+      // Non-2xx on purpose: Meta re-delivers and the DO dedupes, so the customer's
+      // message is deferred rather than lost.
+      expect(res.status).toBe(429);
+    } finally {
+      env.ORG_LIMITER = real;
     }
 
-    // Non-2xx on purpose: Meta re-delivers and the DO dedupes, so the customer's
-    // message is deferred rather than lost.
-    expect(last.status).toBe(429);
+    // The other half of "deferred rather than lost": the limiter sits before the parse,
+    // so a throttled burst costs one binding call and writes nothing.
+    expect(calls.filter((c) => c.table === "messages")).toEqual([]);
   });
 
   it("takes the status path without parsing on the hot path", async () => {

@@ -60,6 +60,17 @@ The **LLM Provider** is a sub-processor of particular note: **message content is
 transmitted outside India to the LLM Provider on every customer message** for the
 purpose of generating a reply. This is a deliberate and necessary part of the Service.
 
+**Images are also transmitted to the LLM Provider**, for safety classification only —
+to detect that a Data Principal is a child, or is in distress or danger, which the
+Processor is otherwise unable to detect in a non-text message. The image is disclosed
+by means of a time-limited signed link (expiring in **5 minutes**) rather than by
+copying the file. The classifier returns only a set of boolean indicators; it is not
+used to generate any reply, and no text it produces is ever sent to a Data Principal.
+
+**Voice notes, documents and stickers are not transmitted to the LLM Provider at all**,
+and **video is neither transmitted nor stored**. Such messages are routed to a human
+operator without automated inspection of their contents.
+
 ## 5. Cross-border transfer
 
 Processing of message content by the LLM Provider involves transfer of personal data
@@ -144,8 +155,8 @@ consent. If any clause is unenforceable, the remainder continues in force.
 
 | Provider | Service | Data processed | Location | Cross-border |
 |---|---|---|---|---|
-| **aicredits.in** | LLM reseller / API gateway. Every prompt passes through it in plaintext, so it is a processor in its own right, not a payment channel | WhatsApp message text and the client's KB | **[update — verify where this operator is established and hosted]** | **Yes** |
-| **OpenAI (`openai/gpt-4o-mini`)** | Message inference / reply generation, reached *via* aicredits.in | WhatsApp message text | **[US]** | **Yes — message content leaves India on every call** |
+| **aicredits.in** | LLM reseller / API gateway. Every prompt passes through it in plaintext, so it is a processor in its own right, not a payment channel | WhatsApp message text, the client's KB, and customer-sent **images** (safety classification only) | **[update — verify where this operator is established and hosted]** | **Yes** |
+| **OpenAI (`openai/gpt-4o-mini`)** | Message inference / reply generation, and safety classification of customer-sent images, reached *via* aicredits.in | WhatsApp message text; customer-sent images, fetched by the provider from a 5-minute signed link. **Not** voice notes, documents, stickers or video | **[US]** | **Yes — message content leaves India on every call** |
 | **[Cloudflare]** | Edge hosting, Workers | Encrypted traffic in transit | **[update]** | Yes |
 | **[Supabase]** | Postgres database hosting, auth, realtime, media object storage | Stored message records, conversation data, customer-sent images and voice notes | **[update]** | Yes |
 | **[GitHub]** | Nightly database backup artifacts | A full copy of the stored message records | **[update]** | Yes |

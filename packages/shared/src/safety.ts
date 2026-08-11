@@ -35,9 +35,10 @@ export const BLOCKED_REPLY =
   "Let me get someone from the team to confirm that for you.";
 
 /**
- * v1 stores media but does not interpret it: the model never sees the bytes, only the
- * caption. Answering from a caption alone is a guess, so the turn goes to a person —
- * and says so, rather than leaving the customer waiting on a reply that never comes.
+ * Media is never *answered* by the model: answering from a caption alone is a guess, so
+ * the turn goes to a person — and says so, rather than leaving the customer waiting on a
+ * reply that never comes. An image is separately shown to the classifier below, but that
+ * call can only raise a flag; it can never produce a word the customer reads.
  */
 export const MEDIA_REPLY =
   "Thanks — I've passed this on to someone from our team, and they'll reply here shortly.";
@@ -101,6 +102,30 @@ export function prefilter(text: string | null | undefined): SafetyKind | null {
 export function flagFromModel(flags: ModelFlags | undefined): SafetyKind | null {
   if (!flags) return null;
   if (flags.distress) return "distress";
+  if (flags.minor) return "minor";
+  return null;
+}
+
+/**
+ * What the classifier may report about an image. Deliberately the same three outcomes
+ * the text path already has: an image is a *detector*, never a new category of reply.
+ */
+export interface ImageFlags {
+  minor: boolean;
+  distress: boolean;
+  abuse: boolean;
+}
+
+/**
+ * Same severity order as `prefilter`, for the same reason: a distressed adult holding a
+ * child outranks the minor rule. `null` means "nothing seen", which is also what an
+ * unreachable classifier returns — an image that could not be screened still hands off
+ * to a person, so a failure degrades to today's behaviour rather than to silence.
+ */
+export function flagFromImage(flags: ImageFlags | null): SafetyKind | null {
+  if (!flags) return null;
+  if (flags.distress) return "distress";
+  if (flags.abuse) return "abuse";
   if (flags.minor) return "minor";
   return null;
 }
