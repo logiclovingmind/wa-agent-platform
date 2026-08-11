@@ -13,9 +13,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Client } from "pg";
 
-const LOCAL_URL = "postgresql://postgres@127.0.0.1:54322/wa_agent";
 const FIXTURES = join(process.cwd(), "scripts", "fixtures");
 const BUCKET = "media";
 
@@ -26,7 +24,6 @@ const FIXTURE: Record<string, { file: string; contentType: string }> = {
 };
 
 const remove = process.argv.includes("--remove");
-const dbUrl = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL ?? LOCAL_URL;
 const supabaseUrl = process.env.SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -35,25 +32,29 @@ if (!supabaseUrl || !serviceKey) {
   process.exit(1);
 }
 
-const client = new Client({ connectionString: dbUrl });
-await client.connect();
+const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}` };
 
 // The path is whatever the seed computed, not something rebuilt here: two copies of
-// mediaPath() that drift would upload to a path nothing points at.
-const { rows } = await client.query<{ wa_message_id: string; media_key: string }>(
-  `select wa_message_id, media_key
-     from messages
-    where wa_message_id = any($1) and media_key is not null`,
-  [Object.keys(FIXTURE)],
+// mediaPath() that drift would upload to a path nothing points at. Read over PostgREST
+// rather than a direct connection, so this needs the same one credential as the upload
+// below — and so it can never read paths out of a different database than it writes to.
+const ids = Object.keys(FIXTURE)
+  .map((id) => `"${id}"`)
+  .join(",");
+const lookup = await fetch(
+  `${supabaseUrl}/rest/v1/messages?select=wa_message_id,media_key&media_key=not.is.null&wa_message_id=in.(${ids})`,
+  { headers },
 );
-await client.end();
+if (!lookup.ok) {
+  console.error(`lookup failed (${lookup.status}): ${await lookup.text()}`);
+  process.exit(1);
+}
+const rows = (await lookup.json()) as Array<{ wa_message_id: string; media_key: string }>;
 
 if (rows.length === 0) {
   console.error("no demo attachment rows found — run scripts/demo-seed.sql first");
   process.exit(1);
 }
-
-const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}` };
 
 for (const { wa_message_id, media_key } of rows) {
   const url = `${supabaseUrl}/storage/v1/object/${BUCKET}/${media_key}`;
