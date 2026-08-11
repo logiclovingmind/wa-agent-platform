@@ -33,6 +33,7 @@ export default function Inbox() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [onlyWaiting, setOnlyWaiting] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useNow();
 
@@ -60,12 +61,17 @@ export default function Inbox() {
   }
 
   async function load() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("conversations")
       .select("id,customer_wa_id,customer_name,handoff_state,last_message_at,window_expires_at")
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(LIST_LIMIT)
       .returns<Conversation[]>();
+
+    // A failed read and a genuinely empty inbox used to look identical. They are not:
+    // a column this build expects but the database does not have renders as "nothing
+    // here", which reads as lost data.
+    setLoadError(error ? error.message : null);
     setConversations(data ?? []);
 
     // Unresolved only. A flag is why the bot stopped talking, so the list has to show
@@ -125,6 +131,12 @@ export default function Inbox() {
           </Button>
         </div>
 
+        {loadError && (
+          <p className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+            Could not load conversations: {loadError}
+          </p>
+        )}
+
         {listed.map((c) => (
           <button
             key={c.id}
@@ -165,7 +177,7 @@ export default function Inbox() {
             )}
           </button>
         ))}
-        {listed.length === 0 && (
+        {listed.length === 0 && !loadError && (
           <p className="px-4 py-6 text-sm text-muted-foreground">
             {onlyWaiting ? "Nothing waiting on you." : "Nothing yet."}
           </p>
