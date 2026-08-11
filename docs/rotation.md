@@ -76,28 +76,41 @@ is now a dead credential in plaintext — delete it rather than leaving it lying
 
 ---
 
-## 3. service_role key — **platform-wide outage, plan it**
+## 3. service_role / anon keys — no outage, but no undo either
 
-⚠️ Rotating the legacy service_role key on Supabase rolls the project's **JWT secret**.
-That invalidates the `anon` key at the same instant. So this is not one credential
-changing, it is three things that must land together:
+⚠️ **The legacy keys cannot be rotated.** Supabase removed that button. `anon` and
+`service_role` are static JWTs signed by the project's legacy JWT secret, and the only
+way to retire them is to move to the replacement keys and then disable the legacy pair
+outright. Any older instruction to "rotate the service_role key" no longer matches the
+product.
 
-- the Worker's `SUPABASE_SERVICE_ROLE_KEY` secret,
-- the Worker's `SUPABASE_ANON_KEY` secret,
-- the dashboard bundle, which has the old anon key **compiled into it** and needs a
-  rebuild and redeploy, not a config change.
+The replacements are on **Project Settings → API Keys**:
 
-Between the roll and the last of those, every client is down: the Worker cannot read
-Postgres, so inbound messages get no reply, and every signed-in dashboard session is
-rejected. Do it in a quiet hour and have the new keys copied out *before* starting.
+| Old | New | Goes in |
+|---|---|---|
+| `anon` | `sb_publishable_…` | `SUPABASE_ANON_KEY`, `VITE_SUPABASE_ANON_KEY` |
+| `service_role` | `sb_secret_…` | `SUPABASE_SERVICE_ROLE_KEY` |
+
+The env var names stay. They describe the privilege level, which has not changed, and
+renaming them would touch `env.ts`, both wrangler secrets and the dashboard build for
+no behavioural gain.
+
+**No code change is needed.** `@supabase/supabase-js` ≥ 2.50 recognises a non-JWT key
+and places it correctly, and the one hand-rolled caller — `packages/shared/src/storage.ts`
+— sends the identical value in `authorization: Bearer` *and* `apikey`, which is the one
+case the docs explicitly still allow. If that ever diverges, the Bearer header must be
+dropped: a non-JWT there is forwarded to Postgres and rejected as a bad token.
+
+Unlike the old roll, this is **not** a simultaneous outage. The legacy keys keep
+working until you disable them, so cut over and verify first, disable second.
 
 ```bash
-# Supabase dashboard → Settings → API → rotate the service_role key.
-# Copy BOTH the new service_role key and the new anon key off that page first.
+# 1. Supabase → Project Settings → API Keys → "Publishable and secret API keys".
+#    Copy both. The secret key is shown once.
 
 cd workers/api
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-npx wrangler secret put SUPABASE_ANON_KEY
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY   # sb_secret_…
+npx wrangler secret put SUPABASE_ANON_KEY           # sb_publishable_…
 npx wrangler deploy
 
 cd ../..
@@ -108,11 +121,21 @@ pnpm deploy:dashboard
 
 Then, in this order, because each one exercises a different half:
 
-1. Send a WhatsApp message to the sandbox number — proves the service_role key.
-2. Sign in to the dashboard — proves the anon key and the rebuild.
+1. Send a WhatsApp message to the sandbox number — proves the secret key, and a media
+   message proves `storage.ts` in particular.
+2. Sign in to the dashboard — proves the publishable key and the rebuild.
 
-Anyone still holding a dashboard tab open gets signed out. That is expected; their
-session token was signed by the old JWT secret.
+Only once both pass: **API Keys → Legacy anon, service_role API keys → Disable
+JWT-based API keys.** That is the step that actually retires the old credential; until
+you press it the leaked key is still live. Do not press it on faith.
+
+### Session signing keys are a different rotation
+
+**JWT Keys → JWT Signing Keys** rotates the key that signs *user sessions*, not the API
+keys above. Rotating there is safe and independent: we never verify a session token
+locally — `workers/api/src/auth.ts` hands it to Supabase's `/auth/v1/user` — so nothing
+in this repo caches a signing key. Signed-in tabs get signed out; that is the whole
+blast radius.
 
 ---
 
