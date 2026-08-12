@@ -1,8 +1,11 @@
 -- Demo fixtures for clicking through dashboard features in a browser.
 --
 -- Not a migration and not test data: these rows live in the real database so the owner
--- can see each feature in its interesting state. Every demo customer number starts
--- 9199900, which is what makes the cleanup at the bottom safe to run.
+-- can see each feature in its interesting state. Seeded customer numbers all start
+-- 9199900, but the cleanup at the top is no longer scoped to them: a demo driven from a
+-- real handset creates real threads that have to go too. It is scoped to the demo org
+-- and guarded on `organizations.is_demo`, so re-running this file is the reset button
+-- after a walk-in — it clears the prospect's KB, name, voice and conversations.
 --
 -- Numbers are full E.164 digits with the country code, exactly as Meta sends wa_id — no
 -- `+` and no spacing. Names are the WhatsApp profile name the webhook carries, which is
@@ -20,13 +23,32 @@
 
 begin;
 
+-- Stamped before the deletes below, which are guarded on it. This file has always written
+-- into "oldest wa_account's org", so this only says out loud what that org already is —
+-- and it is what keeps the blanket deletes off a real client if that ever stops holding.
+update organizations set is_demo = true
+where id = (select org_id from wa_accounts order by created_at limit 1);
+
 -- Before the conversations, because the FK only nulls the link rather than following it.
 -- A demo conversation's usage rows outlive it with `conversation_id` null, where nothing
 -- names them and a re-run would count them twice. `pricing_category` is the only handle
 -- left on them, which is why the demo replies carry one of their own.
 delete from usage_events where pricing_category = 'demo_reply';
 
-delete from conversations where customer_wa_id like '9199900%';
+-- What a walk-in actually spent: `reply` rows from messaging the sandbox number and
+-- `console` rows from the training tab. Same reason as above — they outlive their
+-- conversation by design, so once the rows below are gone the org is all that names them.
+delete from usage_events
+where org_id = (select org_id from wa_accounts order by created_at limit 1)
+  and org_id in (select id from organizations where is_demo);
+
+-- `like '9199900%'` was the whole safety rail while every demo customer was seeded. A
+-- demo driven from a real handset arrives with a real wa_id, so those threads outlived
+-- the re-run and stacked up walk-in on walk-in. Scoped to the demo org instead, behind
+-- two locks: oldest account *and* `is_demo`. An org missing either is untouched.
+delete from conversations
+where org_id = (select org_id from wa_accounts order by created_at limit 1)
+  and org_id in (select id from organizations where is_demo);
 
 insert into conversations
   (id, org_id, wa_account_id, customer_wa_id, customer_name, handoff_state,
@@ -736,9 +758,13 @@ where id = (select org_id from wa_accounts order by created_at limit 1);
 --
 -- Reference data, never instructions: `buildSystemPrompt()` wraps it in delimiters, and
 -- the sector output check runs on the finished reply regardless of what is in here.
+-- Every document, not just the two below. A KB pasted into the console for a walk-in
+-- carries that prospect's titles, so a `title like 'Demo — %'` filter left it behind and
+-- the next demo answered with the last prospect's fees. Same two locks as the deletes at
+-- the top of the file.
 delete from kb_documents
 where org_id = (select org_id from wa_accounts order by created_at limit 1)
-  and title like 'Demo — %';
+  and org_id in (select id from organizations where is_demo);
 
 insert into kb_documents (org_id, title, raw)
 select w.org_id, d.title, d.raw
@@ -776,8 +802,15 @@ $kb$)
 -- §10's voice, on the one org that has a KB to talk about. Left null everywhere else on
 -- purpose: null has to reproduce the old prompt byte for byte, and this is the place to
 -- watch a tone sentence change the answer without a line of code changing.
+--
+-- `name` and `sector` are restored here too, because a walk-in demo edits both to the
+-- prospect's business and nothing else would ever put them back. `general` is the column
+-- default and the right answer for a coaching institute: a sector is a set of legal
+-- guardrails, not an industry (docs/admin-panel.md §10).
 update organizations
-set voice = 'warm and unhurried; explains before it sells; mirrors the customer''s Hinglish',
+set name = 'Demo Institute',
+    sector = 'general',
+    voice = 'warm and unhurried; explains before it sells; mirrors the customer''s Hinglish',
     reply_max_words = 120,
     languages = 'English, Hindi, Kannada'
 where id = (select org_id from wa_accounts order by created_at limit 1);
