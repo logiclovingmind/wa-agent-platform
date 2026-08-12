@@ -3,6 +3,13 @@ import type { Sector } from "./safety.js";
 /** Prompt assembly is CPU, not I/O, so it is on the 10ms meter. Keep it to string joins. */
 export const HISTORY_LIMIT = 10;
 
+/**
+ * How many `kb_documents` rows reach the prompt. Here rather than at either call site
+ * because the reply path and the KB editor have to agree on it: the editor tells the
+ * admin which documents the bot knows, and a limit differing by one makes that a lie.
+ */
+export const KB_DOC_LIMIT = 5;
+
 export interface PromptTurn {
   direction: "inbound" | "outbound";
   body: string | null;

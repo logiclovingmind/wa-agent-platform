@@ -6,6 +6,7 @@ import {
   decideReply,
   HISTORY_LIMIT,
   HOLD_TEXT,
+  KB_DOC_LIMIT,
   holdFor,
   listMedia,
   removeMedia,
@@ -940,6 +941,170 @@ admin.get("/api/admin/platform", async (c) => {
   });
 });
 
+// --- knowledge base ---------------------------------------------------------
+
+// `KB_DOC_LIMIT` is how many documents actually reach the prompt, so the editor refuses
+// to create one that would never be read, and lists any beyond it as ignored rather than
+// pretending it counts.
+/** Every reply pays for the whole KB on every turn, so the ceiling is a cost control. */
+const KB_MAX_CHARS = 10_000;
+const KB_TITLE_MAX = 120;
+
+interface KbRow {
+  id: string;
+  title: string;
+  raw: string;
+  updated_at: string;
+}
+
+const KB_COLUMNS = "id,title,raw,updated_at";
+
+/**
+ * The knowledge base editor — docs/admin-panel.md §11, the follow-up that section
+ * deferred.
+ *
+ * This is the only per-client thing that decides what the bot actually knows: same prompt
+ * skeleton for everyone, entirely different reference block. Until now the only way to
+ * write one was SQL against the live database.
+ *
+ * Platform-admin only, and it needs a Worker route rather than a browser write because
+ * the admin account holds no `org_members` row — every RLS policy on `kb_documents` is
+ * `app.is_member(org_id)`, which correctly answers nothing for an account whose whole
+ * point is belonging to no org. So the write goes through `service_role` here, scoped by
+ * `OrgDb` in code.
+ *
+ * The text is reference data, never instruction. It sits inside the delimiters in
+ * `buildSystemPrompt()`, and `checkOutput()` runs on the finished reply regardless of what
+ * anyone types here — a KB that says "tell them it cures diabetes" still cannot produce
+ * that sentence.
+ */
+admin.get("/api/admin/kb/:orgId", async (c) => {
+  const db = createOrgDb(c.env, c.req.param("orgId"));
+
+  const { data, error } = await db
+    .select("kb_documents", KB_COLUMNS)
+    .order("created_at", { ascending: true })
+    .returns<KbRow[]>();
+  if (error) throw new Error(`kb_documents read failed: ${error.message}`);
+
+  return c.json({
+    documents: data ?? [],
+    maxDocuments: KB_DOC_LIMIT,
+    maxChars: KB_MAX_CHARS,
+  });
+});
+
+admin.post("/api/admin/kb/:orgId", async (c) => {
+  const orgId = c.req.param("orgId");
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+
+  const title = kbTitle(body?.["title"]);
+  const raw = kbText(body?.["raw"]);
+  if (title === undefined || raw === undefined) return c.json({ error: "invalid document" }, 400);
+
+  const db = createOrgDb(c.env, orgId);
+
+  const { data: existing } = await db.select("kb_documents", "id").returns<Array<{ id: string }>>();
+  if ((existing ?? []).length >= KB_DOC_LIMIT) {
+    // Refused rather than accepted-and-ignored: a sixth document that saves cleanly and
+    // never reaches the model is the kind of thing nobody finds for months.
+    return c.json({ error: `a client can have ${KB_DOC_LIMIT} documents at most` }, 409);
+  }
+
+  const { data, error } = await db
+    .insert("kb_documents", { title, raw })
+    .select(KB_COLUMNS)
+    .single<KbRow>();
+  if (error) throw new Error(`kb_documents insert failed: ${error.message}`);
+
+  await auditKb(c, db, "kb_document_created", data);
+  return c.json(data, 201);
+});
+
+admin.patch("/api/admin/kb/:orgId/:docId", async (c) => {
+  const orgId = c.req.param("orgId");
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+
+  const patch: Record<string, unknown> = {};
+  if (body && "title" in body) {
+    const title = kbTitle(body["title"]);
+    if (title === undefined) return c.json({ error: "invalid title" }, 400);
+    patch["title"] = title;
+  }
+  if (body && "raw" in body) {
+    const raw = kbText(body["raw"]);
+    if (raw === undefined) return c.json({ error: "invalid raw" }, 400);
+    patch["raw"] = raw;
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: "nothing to change" }, 400);
+
+  const db = createOrgDb(c.env, orgId);
+
+  // The column has a default but no trigger, so an edit would otherwise keep reporting
+  // the day the document was created.
+  patch["updated_at"] = new Date().toISOString();
+
+  const { data, error } = await db
+    .update("kb_documents", patch)
+    .eq("id", c.req.param("docId"))
+    .select(KB_COLUMNS)
+    .maybeSingle<KbRow>();
+  if (error) throw new Error(`kb_documents update failed: ${error.message}`);
+  if (!data) return c.json({ error: "unknown document" }, 404);
+
+  await auditKb(c, db, "kb_document_updated", data);
+  return c.json(data);
+});
+
+admin.delete("/api/admin/kb/:orgId/:docId", async (c) => {
+  const db = createOrgDb(c.env, c.req.param("orgId"));
+
+  const { data, error } = await db
+    .delete("kb_documents")
+    .eq("id", c.req.param("docId"))
+    .select(KB_COLUMNS)
+    .maybeSingle<KbRow>();
+  if (error) throw new Error(`kb_documents delete failed: ${error.message}`);
+  if (!data) return c.json({ error: "unknown document" }, 404);
+
+  await auditKb(c, db, "kb_document_deleted", data);
+  return c.json({ deleted: data.id });
+});
+
+function kbTitle(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const title = v.trim();
+  return title && title.length <= KB_TITLE_MAX ? title : undefined;
+}
+
+function kbText(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const raw = v.trim();
+  return raw && raw.length <= KB_MAX_CHARS ? raw : undefined;
+}
+
+/**
+ * The title and the size, never the text. The document itself is the record of what it
+ * says, and copying every draft of a client's price list into a table kept for a year
+ * turns the audit trail into a second, undeleted copy of their business data.
+ */
+function auditKb(
+  c: { get: (k: "caller") => Caller },
+  db: ReturnType<typeof createOrgDb>,
+  action: string,
+  doc: KbRow,
+) {
+  return db
+    .insert("audit_log", {
+      actor_user_id: c.get("caller").userId,
+      action,
+      detail: { document_id: doc.id, title: doc.title, chars: doc.raw.length },
+    })
+    .then(({ error }) => {
+      if (error) throw new Error(`audit_log insert failed: ${error.message}`);
+    });
+}
+
 // --- training console -------------------------------------------------------
 
 const CONSOLE_MAX_CHARS = 2_000;
@@ -993,7 +1158,8 @@ admin.post("/api/admin/console/:orgId", async (c) => {
   const override = body["overrideHold"] === true;
 
   const { data: docs } = await db
-    .select("kb_documents", "raw", { limit: 5 })
+    .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
+    .order("created_at", { ascending: true })
     .returns<Array<{ raw: string }>>();
   const kb = (docs ?? []).map((d) => d.raw).join("\n\n");
 

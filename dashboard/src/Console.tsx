@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import { supabase, type AdminOrg } from "./lib/supabase";
-import { consoleRun, setControls, type ConsoleRun, type ConsoleTurn } from "./lib/api";
+import {
+  consoleRun,
+  kbCreate,
+  kbDelete,
+  kbList,
+  kbUpdate,
+  setControls,
+  type ConsoleRun,
+  type ConsoleTurn,
+  type KbDocument,
+  type KbList,
+} from "./lib/api";
 import { inr } from "./lib/utils";
 
 /**
@@ -184,8 +195,9 @@ export default function Console() {
         </div>
       </div>
 
-      <aside className="w-80 shrink-0 overflow-y-auto border-l border-border p-4">
+      <aside className="w-96 shrink-0 overflow-y-auto border-l border-border p-4">
         <Voice orgId={orgId} run={last} />
+        <Kb orgId={orgId} />
 
         {last && (
           <div className="mt-6 space-y-2 text-xs">
@@ -386,11 +398,240 @@ function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
         Save voice
       </button>
       {saved && <p className="text-muted-foreground">{saved}</p>}
-
-      <p className="pt-2 text-muted-foreground">
-        The knowledge base is not editable here yet — it is what makes one client's answers
-        different from another's, and it needs its own write path.
-      </p>
     </div>
   );
 }
+
+/**
+ * The client's knowledge base, edited beside the console so a fact can be added and the
+ * question that missed it asked again in the same breath.
+ *
+ * Retrieval is off (`.claude/rules/data-model.md`) — the documents go into the system
+ * prompt whole, oldest first, and only the first `maxDocuments` of them. Anything past
+ * that is shown as ignored rather than listed as if the bot had read it.
+ */
+function Kb({ orgId }: { orgId: string }) {
+  const [list, setList] = useState<KbList | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [raw, setRaw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setList(null);
+    setOpenId(null);
+    setError(null);
+    if (!orgId) return;
+
+    let live = true;
+    void kbList(orgId)
+      .then((l) => live && setList(l))
+      .catch((e) => live && setError(message(e)));
+    return () => {
+      live = false;
+    };
+  }, [orgId]);
+
+  async function reload() {
+    setList(await kbList(orgId));
+  }
+
+  function open(doc: KbDocument) {
+    setOpenId(doc.id);
+    setTitle(doc.title);
+    setRaw(doc.raw);
+    setError(null);
+  }
+
+  function add() {
+    setOpenId("new");
+    setTitle("");
+    setRaw("");
+    setError(null);
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (openId === "new") await kbCreate(orgId, title, raw);
+      else if (openId) await kbUpdate(orgId, openId, { title, raw });
+      await reload();
+      setOpenId(null);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await kbDelete(orgId, id);
+      await reload();
+      setOpenId(null);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const read = list?.documents.slice(0, list.maxDocuments) ?? [];
+  const ignored = list?.documents.slice(list.maxDocuments) ?? [];
+  const chars = read.reduce((n, d) => n + d.raw.length, 0);
+
+  return (
+    <div className="mt-6 space-y-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="uppercase tracking-wide text-muted-foreground">Knowledge base</span>
+        <span className="flex-1" />
+        {list && list.documents.length < list.maxDocuments && (
+          <button type="button" onClick={add} className="rounded border border-border px-2 py-0.5">
+            Add
+          </button>
+        )}
+      </div>
+
+      <p className="text-muted-foreground">
+        {list === null
+          ? "Loading…"
+          : list.documents.length === 0
+            ? "Empty. The bot can only offer to check with the team."
+            : `${chars.toLocaleString("en-IN")} characters reach the prompt on every turn, so this is what each reply costs before anyone types.`}
+      </p>
+
+      {read.map((d) => (
+        <div key={d.id} className="rounded border border-border">
+          <button
+            type="button"
+            onClick={() => (openId === d.id ? setOpenId(null) : open(d))}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+          >
+            <span className="flex-1 truncate">{d.title}</span>
+            <span className="text-muted-foreground">{d.raw.length.toLocaleString("en-IN")}</span>
+          </button>
+          {openId === d.id && (
+            <Editor
+              title={title}
+              raw={raw}
+              busy={busy}
+              maxChars={list?.maxChars ?? 0}
+              onTitle={setTitle}
+              onRaw={setRaw}
+              onSave={() => void save()}
+              onCancel={() => setOpenId(null)}
+              onDelete={() => void remove(d.id)}
+            />
+          )}
+        </div>
+      ))}
+
+      {openId === "new" && (
+        <div className="rounded border border-border">
+          <Editor
+            title={title}
+            raw={raw}
+            busy={busy}
+            maxChars={list?.maxChars ?? 0}
+            onTitle={setTitle}
+            onRaw={setRaw}
+            onSave={() => void save()}
+            onCancel={() => setOpenId(null)}
+          />
+        </div>
+      )}
+
+      {ignored.length > 0 && (
+        <div className="space-y-1 rounded border border-amber-500/40 bg-amber-500/10 p-2">
+          <p>
+            Past the first {list?.maxDocuments}, so the bot never reads {ignored.length === 1 ? "it" : "them"}:
+          </p>
+          {ignored.map((d) => (
+            <div key={d.id} className="flex items-center gap-2">
+              <span className="flex-1 truncate">{d.title}</span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void remove(d.id)}
+                className="text-destructive"
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function Editor({
+  title,
+  raw,
+  busy,
+  maxChars,
+  onTitle,
+  onRaw,
+  onSave,
+  onCancel,
+  onDelete,
+}: {
+  title: string;
+  raw: string;
+  busy: boolean;
+  maxChars: number;
+  onTitle: (v: string) => void;
+  onRaw: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const over = raw.length > maxChars;
+  return (
+    <div className="space-y-2 border-t border-border p-2">
+      <input
+        value={title}
+        onChange={(e) => onTitle(e.target.value)}
+        placeholder="Timings and location"
+        className="w-full rounded border border-border bg-transparent px-2 py-1"
+      />
+      <textarea
+        value={raw}
+        onChange={(e) => onRaw(e.target.value)}
+        rows={10}
+        placeholder="Open 9am to 8pm, closed Tuesdays. Haircut ₹400."
+        className="w-full rounded border border-border bg-transparent px-2 py-1 font-mono text-[11px] leading-relaxed"
+      />
+      <div className="flex items-center gap-2">
+        <span className={over ? "text-destructive" : "text-muted-foreground"}>
+          {raw.length.toLocaleString("en-IN")} / {maxChars.toLocaleString("en-IN")}
+        </span>
+        <span className="flex-1" />
+        {onDelete && (
+          <button type="button" disabled={busy} onClick={onDelete} className="text-destructive">
+            Delete
+          </button>
+        )}
+        <button type="button" onClick={onCancel} className="rounded border border-border px-2 py-1">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={busy || over || !title.trim() || !raw.trim()}
+          onClick={onSave}
+          className="rounded bg-foreground px-3 py-1 font-medium text-background disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const message = (e: unknown) => (e instanceof Error ? e.message : "failed");

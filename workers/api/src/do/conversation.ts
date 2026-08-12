@@ -9,6 +9,7 @@ import {
   HOLD_TEXT,
   holdFor,
   isWindowOpen,
+  KB_DOC_LIMIT,
   listMedia,
   mediaPath,
   prefilter,
@@ -670,8 +671,12 @@ export class ConversationDO extends DurableObject<Env> {
       return { businessName: "", sector: "general", kb: "", history: [], hold };
     }
 
+    // Ordered, not just limited: without it PostgREST picks any five, so which documents
+    // the bot knows would change under it and the KB editor's "these five reach the
+    // prompt" would be a guess.
     const { data: docs } = await db
-      .select("kb_documents", "raw", { limit: 5 })
+      .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
+      .order("created_at", { ascending: true })
       .returns<Array<{ raw: string }>>();
     const { data: history } = await db
       .select("messages", "direction,body", { limit: HISTORY_LIMIT })

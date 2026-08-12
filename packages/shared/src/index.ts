@@ -26,6 +26,7 @@ export type { SafetyKind, ModelFlags, ImageFlags, Sector, OutputVerdict } from "
 
 export {
   HISTORY_LIMIT,
+  KB_DOC_LIMIT,
   DEFAULT_REPLY_MAX_WORDS,
   buildSystemPrompt,
   buildMessages,

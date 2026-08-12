@@ -260,6 +260,60 @@ export async function setPlatformAdmin(email: string, grant: boolean): Promise<v
   if (!res.ok) throw new Error(await res.text());
 }
 
+/**
+ * The client's knowledge base — the one thing that makes one client's answers different
+ * from another's. Admin-only, and it needs the Worker rather than a browser write because
+ * the admin account holds no `org_members` row, so every RLS policy correctly answers it
+ * nothing.
+ */
+export interface KbDocument {
+  id: string;
+  title: string;
+  raw: string;
+  updated_at: string;
+}
+
+export interface KbList {
+  documents: KbDocument[];
+  /** Only this many reach the prompt, oldest first. */
+  maxDocuments: number;
+  maxChars: number;
+}
+
+export async function kbList(orgId: string): Promise<KbList> {
+  const res = await authedGet(`/api/admin/kb/${orgId}`);
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as KbList;
+}
+
+export async function kbCreate(orgId: string, title: string, raw: string): Promise<KbDocument> {
+  const res = await post(`/api/admin/kb/${orgId}`, { title, raw });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as KbDocument;
+}
+
+export async function kbUpdate(
+  orgId: string,
+  docId: string,
+  patch: { title?: string; raw?: string },
+): Promise<KbDocument> {
+  const res = await patchJson(`/api/admin/kb/${orgId}/${docId}`, patch);
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as KbDocument;
+}
+
+export async function kbDelete(orgId: string, docId: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("signed out");
+
+  const res = await fetch(`${BASE}/api/admin/kb/${orgId}/${docId}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 /** One turn of browser-held console history. Never persisted anywhere. */
 export interface ConsoleTurn {
   direction: "inbound" | "outbound";
