@@ -20,12 +20,10 @@
 
 begin;
 
--- Before the conversations, and not optional. `usage_events` has a composite foreign key
--- `(conversation_id, org_id)` declared `on delete set null`, and Postgres applies that to
--- every column in the key — including `org_id`, which is `not null`. Deleting a
--- conversation that has usage rows therefore does not null the link, it raises
---   null value in column "org_id" of relation "usage_events" violates not-null constraint
--- and takes the whole transaction with it. See the note at the bottom of this file.
+-- Before the conversations, because the FK only nulls the link rather than following it.
+-- A demo conversation's usage rows outlive it with `conversation_id` null, where nothing
+-- names them and a re-run would count them twice. `pricing_category` is the only handle
+-- left on them, which is why the demo replies carry one of their own.
 delete from usage_events where pricing_category = 'demo_reply';
 
 delete from conversations where customer_wa_id like '9199900%';
