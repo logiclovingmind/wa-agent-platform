@@ -27,6 +27,8 @@ export interface Conversation {
   handoff_state: "bot" | "requested" | "human" | "returned";
   last_message_at: string | null;
   window_expires_at: string | null;
+  /** When somebody on the team called this customer back. Null means nobody has. */
+  followed_up_at: string | null;
 }
 
 /**
@@ -146,6 +148,16 @@ export interface Lead {
   budget: string | null;
   notes: string | null;
   updated_at: string;
+}
+
+/** One hit from `search_everything`. Three tables, one shape, ranked in Postgres. */
+export interface SearchHit {
+  kind: "person" | "lead" | "message";
+  conversation_id: string;
+  customer_name: string | null;
+  customer_wa_id: string;
+  snippet: string | null;
+  at: string | null;
 }
 
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";

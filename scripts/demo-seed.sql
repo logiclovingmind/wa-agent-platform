@@ -437,6 +437,17 @@ join (values
   ('919990030001', 'Harini', 'Data science — weekend batch',       'Batch starting on the 6th', '₹18,000 full course, or ₹4,500 a module', 'Works full time, no coding background. Seat held.')
 ) as l(wa_id, name, intent, timeframe, budget, notes) on l.wa_id = c.customer_wa_id;
 
+-- Who has already been called back. "To call" is only a worklist if rows leave it, and
+-- a demo where every lead is outstanding shows a filter nobody has ever used. The ones
+-- marked are the older ones — which is also the true shape of the day: what came in this
+-- morning is what is still owed.
+update conversations c
+set followed_up_at = c.last_message_at + interval '3 hours'
+from leads l
+where l.conversation_id = c.id
+  and right(c.customer_wa_id, 4)::int % 3 = 1
+  and c.last_message_at < now() - interval '1 day';
+
 -- ---------------------------------------------------------------------------
 -- Runtime controls, in their resting state
 -- ---------------------------------------------------------------------------

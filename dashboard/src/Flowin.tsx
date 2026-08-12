@@ -47,7 +47,7 @@ interface PulseHour {
  * Every number here is aggregated in Postgres (`pulse_*`). Counting a month of messages
  * in the browser would spend the shared 5GB egress budget on arithmetic.
  */
-export default function Pulse({ orgId }: { orgId: string }) {
+export default function Flowin({ orgId }: { orgId: string }) {
   const [days, setDays] = useState<PulseDay[]>([]);
   const [hours, setHours] = useState<PulseHour[]>([]);
   const [replySeconds, setReplySeconds] = useState<number | null>(null);
@@ -104,7 +104,7 @@ export default function Pulse({ orgId }: { orgId: string }) {
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6">
       <header className="mb-5">
-        <h1 className="text-lg font-semibold">Pulse</h1>
+        <h1 className="text-lg font-semibold">Flowin</h1>
         <p className="text-sm text-muted-foreground">
           The last five weeks on WhatsApp.
         </p>
@@ -195,10 +195,7 @@ export default function Pulse({ orgId }: { orgId: string }) {
         </section>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Calendar grid={grid} />
-        <Hours hours={hours} />
-      </div>
+      <Hours hours={hours} />
     </div>
   );
 }
@@ -216,55 +213,6 @@ function Stat({ value, label, hint }: { value: string; label: string; hint?: str
 function Title({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">{children}</div>
-  );
-}
-
-/**
- * The calendar, laid out in weeks with Sunday on top, so the quiet column is visible as
- * a column. A bar chart of the same numbers hides exactly that: the shape an owner acts
- * on is weekly, not daily.
- */
-function Calendar({
-  grid,
-}: {
-  grid: Array<{ day: string; conversations: number; afterHours: number }>;
-}) {
-  const peak = Math.max(...grid.map((d) => d.conversations), 1);
-  const weeks: Array<typeof grid> = [];
-  for (let i = 0; i < grid.length; i += 7) weeks.push(grid.slice(i, i + 7));
-
-  return (
-    <section className="rounded border border-border p-4">
-      <Title>Every day, five weeks</Title>
-      <div className="flex gap-1.5">
-        {weeks.map((week, i) => (
-          <div key={i} className="flex flex-1 flex-col gap-1.5">
-            {week.map((d) => (
-              <div
-                key={d.day}
-                className="aspect-square rounded-sm ring-1 ring-inset ring-border transition-transform hover:scale-110"
-                style={{
-                  // A share of the busiest day. A silent day keeps a faint tint rather
-                  // than going blank, so "closed" and "no data" do not look identical.
-                  background:
-                    d.conversations === 0
-                      ? "transparent"
-                      : `color-mix(in srgb, ${AI} ${15 + (d.conversations / peak) * 85}%, transparent)`,
-                }}
-                title={`${dayLabel(d.day)} — ${d.conversations} conversations${
-                  d.afterHours > 0 ? `, ${d.afterHours} answered out of hours` : ""
-                }`}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>{dayLabel(grid[0]!.day)}</span>
-        <span>busiest day: {peak}</span>
-        <span>today</span>
-      </div>
-    </section>
   );
 }
 

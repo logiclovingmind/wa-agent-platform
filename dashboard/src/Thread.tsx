@@ -4,6 +4,7 @@ import {
   customerLabel,
   supabase,
   type Conversation,
+  type Lead,
   type Message,
   type SafetyFlag,
 } from "./lib/supabase";
@@ -42,11 +43,13 @@ function downloadJson(filename: string, data: unknown): void {
 export default function Thread({
   conversation,
   flags,
+  lead,
   isOwner,
   onChanged,
 }: {
   conversation: Conversation;
   flags: SafetyFlag[];
+  lead: Lead | null;
   isOwner: boolean;
   onChanged: () => void;
 }) {
@@ -155,6 +158,21 @@ export default function Thread({
       setError(e instanceof Error ? e.message : String(e));
     }
     setBusy(false);
+  }
+
+  /**
+   * The one write the browser makes to `conversations`. It reaches Supabase directly
+   * rather than the Worker because it touches neither Meta nor money — a column grant
+   * on `followed_up_at` alone is what stops it being anything more (migration 0023).
+   */
+  async function followUp() {
+    await act(async () => {
+      const { error: err } = await supabase
+        .from("conversations")
+        .update({ followed_up_at: new Date().toISOString() })
+        .eq("id", id);
+      if (err) throw new Error(err.message);
+    });
   }
 
   async function send() {
@@ -285,6 +303,35 @@ export default function Thread({
         </div>
       )}
 
+      {/* What the assistant heard, next to the conversation it heard it in. There is no
+          separate leads screen: this is the detail, the list is the worklist, and the
+          CSV is the thing an owner actually files. */}
+      {lead && (
+        <div className="border-b border-border px-4 py-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">
+              What they told the assistant
+            </span>
+            {conversation.followed_up_at ? (
+              <span className="text-xs text-muted-foreground">
+                called back {ist(conversation.followed_up_at)}
+              </span>
+            ) : (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => void followUp()}>
+                Mark called back
+              </Button>
+            )}
+          </div>
+          <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+            <Learned label="Name given" value={lead.name} />
+            <Learned label="Wants" value={lead.intent} />
+            <Learned label="When" value={lead.timeframe} />
+            <Learned label="Budget" value={lead.budget} />
+            <Learned label="Notes" value={lead.notes} />
+          </dl>
+        </div>
+      )}
+
       {left?.closed && (
         <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
           The 24-hour window has closed. Meta rejects an ordinary reply now — only an
@@ -367,6 +414,17 @@ export default function Thread({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Blank means the customer never said, which is worth showing as a gap rather than
+ *  hiding as an absent row: the empty half of this list is what is still worth asking. */
+function Learned({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="w-20 shrink-0 text-muted-foreground">{label}</dt>
+      <dd className={value ? "" : "text-muted-foreground/50"}>{value ?? "—"}</dd>
     </div>
   );
 }

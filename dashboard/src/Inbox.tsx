@@ -4,10 +4,12 @@ import {
   customerLabel,
   supabase,
   type Conversation,
+  type Lead,
   type SafetyFlag,
 } from "./lib/supabase";
 import { Button } from "./components/ui/button";
 import { cn, ist, useNow, windowLeft } from "./lib/utils";
+import { downloadLeadsCsv, leadsFor } from "./lib/leads";
 import Thread from "./Thread";
 
 const LIST_LIMIT = 50;
@@ -27,12 +29,22 @@ function attention(c: Conversation, f: SafetyFlag[]) {
   return ATTENTION.find((a) => a.match(c, f)) ?? null;
 }
 
-export default function Inbox({ isOwner }: { isOwner: boolean }) {
+type Filter = "waiting" | "callback" | "all";
+
+/**
+ * One list, not two. The Leads tab was the same rows with different columns, and keeping
+ * it separate meant an owner had to check two screens to answer one question — who do I
+ * deal with this morning. What the assistant learned rides on the row it came from, and
+ * the spreadsheet an owner actually works from is the export, not a grid on screen.
+ */
+export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: string | null }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [flags, setFlags] = useState<Map<string, SafetyFlag[]>>(new Map());
+  const [leads, setLeads] = useState<Map<string, Lead>>(new Map());
   const [openId, setOpenId] = useState<string | null>(null);
-  const [onlyWaiting, setOnlyWaiting] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useNow();
 
@@ -43,7 +55,9 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
   async function load() {
     const { data, error } = await supabase
       .from("conversations")
-      .select("id,customer_wa_id,customer_name,handoff_state,last_message_at,window_expires_at")
+      .select(
+        "id,customer_wa_id,customer_name,handoff_state,last_message_at,window_expires_at,followed_up_at",
+      )
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(LIST_LIMIT)
       .returns<Conversation[]>();
@@ -68,9 +82,42 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
       byConversation.set(f.conversation_id, [...(byConversation.get(f.conversation_id) ?? []), f]);
     }
     setFlags(byConversation);
+
+    // Only for the rows on screen. Reading every lead to label fifty conversations is
+    // the kind of query the egress budget dies to.
+    setLeads(await leadsFor((data ?? []).map((c) => c.id)));
   }
 
+  // Search can land on a conversation older than the fifty this list holds, so a hit
+  // that is not already loaded is fetched on its own and put at the top. Without this
+  // the box finds a six-month-old customer and then opens nothing.
+  useEffect(() => {
+    if (!jumpTo) return;
+    setOpenId(jumpTo);
+    if (conversations.some((c) => c.id === jumpTo)) return;
+
+    void (async () => {
+      const { data } = await supabase
+        .from("conversations")
+        .select(
+          "id,customer_wa_id,customer_name,handoff_state,last_message_at,window_expires_at,followed_up_at",
+        )
+        .eq("id", jumpTo)
+        .returns<Conversation[]>();
+      if (!data?.[0]) return;
+      const lead = await leadsFor([jumpTo]);
+      setConversations((prev) => [data[0]!, ...prev.filter((c) => c.id !== jumpTo)]);
+      setLeads((prev) => new Map([...prev, ...lead]));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo]);
+
   const open = conversations.find((c) => c.id === openId) ?? null;
+
+  /** Somebody asked for something and nobody has called them back. */
+  function owed(c: Conversation): boolean {
+    return leads.has(c.id) && c.followed_up_at === null;
+  }
 
   // Waiting conversations first, and within them the most urgent reason first. Sorting
   // rather than only filtering, so the default view is already useful.
@@ -82,30 +129,40 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
   });
 
   const waitingCount = conversations.filter((c) => attention(c, flags.get(c.id) ?? [])).length;
-  const listed = onlyWaiting ? ranked.filter((c) => attention(c, flags.get(c.id) ?? [])) : ranked;
+  const callbackCount = conversations.filter(owed).length;
+  const listed =
+    filter === "waiting"
+      ? ranked.filter((c) => attention(c, flags.get(c.id) ?? []))
+      : filter === "callback"
+        ? ranked.filter(owed)
+        : ranked;
+
+  async function exportCsv() {
+    setExporting(true);
+    setLoadError(await downloadLeadsCsv());
+    setExporting(false);
+  }
 
   return (
     <div className="flex h-full">
-      <aside className="w-72 shrink-0 overflow-y-auto border-r border-border">
-        <header className="border-b border-border px-4 py-3">
+      <aside className="w-80 shrink-0 overflow-y-auto border-r border-border">
+        <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <span className="text-sm font-semibold">Conversations</span>
+          <Button variant="ghost" size="sm" disabled={exporting} onClick={() => void exportCsv()}>
+            Export
+          </Button>
         </header>
 
         <div className="flex gap-1 border-b border-border px-3 py-2">
-          <Button
-            variant={onlyWaiting ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setOnlyWaiting(true)}
-          >
+          <Chip active={filter === "waiting"} onClick={() => setFilter("waiting")}>
             Needs you {waitingCount > 0 && `(${waitingCount})`}
-          </Button>
-          <Button
-            variant={onlyWaiting ? "ghost" : "default"}
-            size="sm"
-            onClick={() => setOnlyWaiting(false)}
-          >
+          </Chip>
+          <Chip active={filter === "callback"} onClick={() => setFilter("callback")}>
+            To call {callbackCount > 0 && `(${callbackCount})`}
+          </Chip>
+          <Chip active={filter === "all"} onClick={() => setFilter("all")}>
             All
-          </Button>
+          </Chip>
         </div>
 
         {loadError && (
@@ -123,15 +180,25 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
               c.id === openId && "bg-muted",
             )}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="font-medium">{customerLabel(c)}</span>
               {attention(c, flags.get(c.id) ?? []) && (
-                <span className="text-xs text-muted-foreground">
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {attention(c, flags.get(c.id) ?? [])!.label}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+
+            {/* What they asked for, on the row, because that is what the owner is
+                scanning this list to find. Blank means the conversation never got as
+                far as saying — not that nothing was recorded. */}
+            {leads.get(c.id)?.intent && (
+              <div className="mt-0.5 truncate text-xs text-foreground/80">
+                {leads.get(c.id)!.intent}
+              </div>
+            )}
+
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
               <span>{ist(c.last_message_at)}</span>
               {(() => {
                 const left = windowLeft(c.window_expires_at);
@@ -139,7 +206,9 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
                   <span className="font-medium text-destructive">{left.text}</span>
                 ) : null;
               })()}
+              {owed(c) && <span className="font-medium text-amber-600">to call</span>}
             </div>
+
             {(flags.get(c.id)?.length ?? 0) > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">
                 {[...new Set(flags.get(c.id)!.map((f) => f.kind))].map((kind) => (
@@ -156,7 +225,11 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
         ))}
         {listed.length === 0 && !loadError && (
           <p className="px-4 py-6 text-sm text-muted-foreground">
-            {onlyWaiting ? "Nothing waiting on you." : "Nothing yet."}
+            {filter === "waiting"
+              ? "Nothing waiting on you."
+              : filter === "callback"
+                ? "Everyone has been called back."
+                : "Nothing yet."}
           </p>
         )}
       </aside>
@@ -165,6 +238,7 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
         <Thread
           conversation={open}
           flags={flags.get(open.id) ?? []}
+          lead={leads.get(open.id) ?? null}
           isOwner={isOwner}
           onChanged={load}
         />
@@ -174,5 +248,21 @@ export default function Inbox({ isOwner }: { isOwner: boolean }) {
         </div>
       )}
     </div>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button variant={active ? "default" : "ghost"} size="sm" onClick={onClick}>
+      {children}
+    </Button>
   );
 }

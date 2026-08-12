@@ -5,21 +5,24 @@ import { Button } from "./components/ui/button";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
-import Pulse from "./Pulse";
-import Leads from "./Leads";
+import Flowin from "./Flowin";
+import Search from "./Search";
 import Admin from "./Admin";
 import Console from "./Console";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  // Pulse, not the inbox. The inbox is where you go when something needs you; landing
+  // Flowin, not the inbox. The inbox is where you go when something needs you; landing
   // there makes an ordinary quiet day look like the product does nothing.
-  const [view, setView] = useState<"inbox" | "pulse" | "leads" | "admin" | "console">("pulse");
+  const [view, setView] = useState<"inbox" | "pulse" | "admin" | "console">("pulse");
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [orgId, setOrgId] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  // Set by the search box, consumed by the inbox. A hit is a conversation to open, and
+  // it may well be older than the fifty rows the list holds.
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
@@ -118,7 +121,7 @@ export default function App() {
           size="sm"
           onClick={() => setView("pulse")}
         >
-          Pulse
+          Flowin
         </Button>
         <Button
           variant={view === "inbox" ? "default" : "ghost"}
@@ -126,13 +129,6 @@ export default function App() {
           onClick={() => setView("inbox")}
         >
           WhatsApp
-        </Button>
-        <Button
-          variant={view === "leads" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setView("leads")}
-        >
-          Leads
         </Button>
         {/* Only reachable by an account that is both a platform admin and a member of
             some org, which the split above is meant to make unnecessary. Kept so that
@@ -156,6 +152,15 @@ export default function App() {
           </Button>
         )}
         <span className="flex-1" />
+        {orgId && (
+          <Search
+            orgId={orgId}
+            onOpen={(id) => {
+              setView("inbox");
+              setJumpTo(id);
+            }}
+          />
+        )}
         <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
           Sign out
         </Button>
@@ -167,11 +172,9 @@ export default function App() {
         ) : view === "console" && isPlatformAdmin ? (
           <Console />
         ) : view === "pulse" ? (
-          <Pulse orgId={orgId} />
-        ) : view === "leads" ? (
-          <Leads />
+          <Flowin orgId={orgId} />
         ) : (
-          <Inbox isOwner={isOwner} />
+          <Inbox isOwner={isOwner} jumpTo={jumpTo} />
         )}
       </div>
     </div>

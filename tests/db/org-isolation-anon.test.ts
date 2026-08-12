@@ -66,6 +66,28 @@ describe("org isolation, anon path", () => {
     ).rejects.toThrow(/permission denied/i);
   });
 
+  // 0023: the browser marks a customer called back, which is the first write to
+  // `conversations` from the dashboard. RLS cannot say "this row but only this column",
+  // so the column grant is the lock — without it the same policy would let a member
+  // rewrite handoff_state and take a conversation off the bot from devtools.
+  it("lets a member set followed_up_at and nothing else on the row", async () => {
+    await asUser(db, fx.userA, () =>
+      db.query("update conversations set followed_up_at = now() where id = $1", [fx.convA]),
+    );
+
+    await expect(
+      asUser(db, fx.userA, () =>
+        db.query("update conversations set handoff_state = 'human' where id = $1", [fx.convA]),
+      ),
+    ).rejects.toThrow(/permission denied/i);
+
+    await expect(
+      asUser(db, fx.userA, () =>
+        db.query("update conversations set followed_up_at = now() where id = $1", [fx.convB]),
+      ),
+    ).resolves.toMatchObject({ rowCount: 0 });
+  });
+
   it("does not let the anon key call usage_daily at all", async () => {
     await db.query("begin");
     try {
