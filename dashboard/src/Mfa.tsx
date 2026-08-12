@@ -242,9 +242,11 @@ export function MfaSetup() {
         <form onSubmit={confirm} className="space-y-4 rounded-md border border-border p-4">
           <p className="text-sm">Scan this in Google Authenticator, 1Password, or Aegis.</p>
           {/* GoTrue hands back the SVG itself, so the QR is never generated here and no
-              image library is needed. The prefix is required — the field is bare markup. */}
+              image library is needed. Percent-encoded rather than inlined raw: the markup
+              carries `#` in its fill colours, and a `#` ends a data URI early — the image
+              then loads as far as the first colour and renders broken. */}
           <img
-            src={`data:image/svg+xml;utf-8,${pending.qr}`}
+            src={`data:image/svg+xml,${encodeURIComponent(pending.qr)}`}
             alt=""
             className="h-44 w-44 bg-white"
           />
