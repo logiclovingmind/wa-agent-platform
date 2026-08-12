@@ -150,7 +150,7 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
           screen until a conversation is picked, and then the thread is. */}
       <aside
         className={cn(
-          "w-full shrink-0 overflow-y-auto border-border md:w-80 md:border-r",
+          "w-full shrink-0 overflow-y-auto overscroll-contain border-border md:w-80 md:border-r",
           open && "hidden md:block",
         )}
       >

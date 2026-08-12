@@ -18,7 +18,7 @@ export default function SignIn() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-dvh items-center justify-center">
       <form onSubmit={submit} className="w-80 max-w-full space-y-4 px-4">
         {/* The one screen the full lockup fits on. The wordmark is twenty times wider
             than it is tall, so everywhere else in the app it is the mark alone. */}

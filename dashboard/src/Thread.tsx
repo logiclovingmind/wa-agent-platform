@@ -353,7 +353,7 @@ export default function Thread({
         </div>
       )}
 
-      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+      <div className="flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-4">
         {more && (
           <div className="text-center">
             <Button variant="ghost" size="sm" onClick={loadOlder}>

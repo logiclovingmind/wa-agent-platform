@@ -11,7 +11,7 @@
 // Android crops a maskable icon to the launcher's shape and nothing in the outer 20% is
 // guaranteed to survive.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,21 +28,47 @@ if (!viewBox || !body) throw new Error("logo.svg is not the shape this script ex
 
 const work = mkdtempSync(join(tmpdir(), "icons-"));
 
-for (const size of [192, 512]) {
-  const inset = Math.round(size * 0.2);
-  const inner = size - inset * 2;
-  const source = join(work, `icon-${size}.svg`);
+// Rasterised once, at the largest size, and scaled down from there. Asking qlmanage for a
+// 192px thumbnail of a 192px SVG returns a 192px canvas with the drawing at about 120px
+// in the top-left corner and the rest transparent — which is what shipped, and what an
+// installed icon on a home screen made of. It only fills the canvas when the requested
+// size is the larger number, so the small one is a resize rather than a second render.
+const BASE = 512;
+const inset = Math.round(BASE * 0.2);
+const inner = BASE - inset * 2;
+const source = join(work, "icon.svg");
 
-  writeFileSync(
-    source,
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-  <rect width="${size}" height="${size}" fill="${TILE}"/>
+writeFileSync(
+  source,
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${BASE}" height="${BASE}" viewBox="0 0 ${BASE} ${BASE}">
+  <rect width="${BASE}" height="${BASE}" fill="${TILE}"/>
   <svg x="${inset}" y="${inset}" width="${inner}" height="${inner}" viewBox="${viewBox}" fill="${MARK}" color="${MARK}">${body.replace(/currentColor/g, MARK)}</svg>
 </svg>`,
-  );
+);
 
-  execFileSync("qlmanage", ["-t", "-s", String(size), "-o", work, source], { stdio: "ignore" });
+execFileSync("qlmanage", ["-t", "-s", String(BASE), "-o", work, source], { stdio: "ignore" });
+
+const out512 = join(root, "dashboard/public", "icon-512.png");
+renameSync(`${source}.png`, out512);
+console.log(`wrote ${out512}`);
+
+for (const size of [192]) {
   const out = join(root, "dashboard/public", `icon-${size}.png`);
-  renameSync(`${source}.png`, out);
+  copyFileSync(out512, out);
+  execFileSync("sips", ["-z", String(size), String(size), out], { stdio: "ignore" });
   console.log(`wrote ${out}`);
+}
+
+// Both files must come out square and full-bleed. The failure this guards against is
+// silent: a wrong icon looks fine in the repo and only shows itself once someone has
+// installed it, at which point iOS caches it and a redeploy does not replace it.
+for (const [size, file] of [
+  [512, out512],
+  [192, join(root, "dashboard/public", "icon-192.png")],
+] as const) {
+  const probe = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file], {
+    encoding: "utf8",
+  });
+  const [w, h] = [...probe.matchAll(/pixel(?:Width|Height): (\d+)/g)].map((m) => Number(m[1]));
+  if (w !== size || h !== size) throw new Error(`${file} is ${w}x${h}, expected ${size}`);
 }

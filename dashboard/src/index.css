@@ -32,6 +32,21 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The document itself must never scroll — only the panes inside it do.
+   `100vh` on iOS is the height the viewport would be with the browser chrome hidden, so
+   the app shell was taller than what you can actually see. The excess scrolled the whole
+   page: swiping down slid the tab bar off the top, and getting it back meant scrolling
+   the list to its top first and only then dragging the document, which is why one swipe
+   up never brought it back. `100dvh` (h-dvh in the markup) is the height that is really
+   there, and it tracks the URL bar as it collapses.
+
+   `overscroll-behavior: none` kills the rubber-band at the same time: without it, a flick
+   past the end of the conversation list keeps travelling into the document behind it. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 .recharts-wrapper,
 .recharts-wrapper *:focus,
 .recharts-surface {

@@ -16,12 +16,31 @@ const Flowin = lazy(() => import("./Flowin"));
 const Admin = lazy(() => import("./Admin"));
 const Console = lazy(() => import("./Console"));
 
+type View = "inbox" | "pulse" | "admin" | "console";
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   // Flowin, not the inbox. The inbox is where you go when something needs you; landing
   // there makes an ordinary quiet day look like the product does nothing.
-  const [view, setView] = useState<"inbox" | "pulse" | "admin" | "console">("pulse");
+  const [view, setView] = useState<View>("pulse");
+  /**
+   * Which views have been opened at least once. Switching tabs used to unmount one and
+   * mount the other, so every tap tore down a screenful of chart SVGs and then sat on a
+   * blank pane for three round trips, refetching what it had already fetched a minute
+   * earlier. On a phone that reads as the app hanging on the press.
+   *
+   * A view is mounted on first visit and stays mounted, hidden, afterwards. The cost is
+   * one open Realtime channel when a conversation is left open on another tab — which is
+   * that conversation still being open; it still closes on unmount and on tab close, as
+   * invariant 8 requires.
+   */
+  const [mounted, setMounted] = useState<Record<View, boolean>>({
+    pulse: true,
+    inbox: false,
+    admin: false,
+    console: false,
+  });
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [orgId, setOrgId] = useState("");
@@ -49,6 +68,10 @@ export default function App() {
   useEffect(() => {
     if (session) void loadRole();
   }, [session]);
+
+  useEffect(() => {
+    setMounted((m) => (m[view] ? m : { ...m, [view]: true }));
+  }, [view]);
 
   /**
    * Lives here rather than in the inbox because two screens need it now. It decides
@@ -96,7 +119,7 @@ export default function App() {
   const adminOnly = isPlatformAdmin && !isMember;
   if (adminOnly) {
     return (
-      <div className="flex h-screen flex-col">
+      <div className="flex h-dvh flex-col">
         <nav className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
           <img src="/logo.svg" alt="Logic Loving Mind" className="h-6 w-6 shrink-0" />
           <span className="text-sm font-semibold">Platform admin</span>
@@ -125,7 +148,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh flex-col">
       {/* Wraps rather than scrolls: on a phone the search box takes a line of its own
           below the tabs, which is where a thumb expects it anyway. */}
       <nav className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
@@ -184,19 +207,35 @@ export default function App() {
 
       <div className="min-h-0 flex-1">
         <Suspense fallback={<Loading />}>
-          {view === "admin" && isPlatformAdmin ? (
-            <Admin />
-          ) : view === "console" && isPlatformAdmin ? (
-            <Console />
-          ) : view === "pulse" ? (
-            <Flowin orgId={orgId} />
-          ) : (
-            <Inbox isOwner={isOwner} jumpTo={jumpTo} />
+          {mounted.pulse && (
+            <Pane show={view === "pulse"}>
+              <Flowin orgId={orgId} />
+            </Pane>
+          )}
+          {mounted.inbox && (
+            <Pane show={view === "inbox"}>
+              <Inbox isOwner={isOwner} jumpTo={jumpTo} />
+            </Pane>
+          )}
+          {mounted.admin && isPlatformAdmin && (
+            <Pane show={view === "admin"}>
+              <Admin />
+            </Pane>
+          )}
+          {mounted.console && isPlatformAdmin && (
+            <Pane show={view === "console"}>
+              <Console />
+            </Pane>
           )}
         </Suspense>
       </div>
     </div>
   );
+}
+
+/** `display: none` rather than unmounting, so a tab that has been opened stays ready. */
+function Pane({ show, children }: { show: boolean; children: React.ReactNode }) {
+  return <div className={show ? "h-full" : "hidden"}>{children}</div>;
 }
 
 function Loading() {

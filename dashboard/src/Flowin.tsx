@@ -102,7 +102,7 @@ export default function Flowin({ orgId }: { orgId: string }) {
   ];
 
   return (
-    <div className="h-full overflow-y-auto p-4 sm:p-6">
+    <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
       <header className="mb-5">
         <h1 className="text-lg font-semibold">Flowin</h1>
         <p className="text-sm text-muted-foreground">

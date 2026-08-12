@@ -41,7 +41,7 @@ export default function SetPassword({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-dvh items-center justify-center">
       <form onSubmit={submit} className="w-80 space-y-4">
         <h1 className="text-lg font-semibold">Choose a new password</h1>
         <input
