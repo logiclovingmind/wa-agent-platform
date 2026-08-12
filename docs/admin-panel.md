@@ -5,7 +5,7 @@ Written 2026-08-11 (session 18) as a plan only. Nothing here is built yet except
 decisions and the traps, not just a feature list.
 
 The panel is **our internal management screen**, not a sales prop. It is reached by
-`logiclovingmind@gmail.com`, which belongs to no org and therefore cannot read any
+`admin@logiclovingmind.com`, which belongs to no org and therefore cannot read any
 client's messages — see §5, that limit is deliberate and should survive every feature
 below.
 

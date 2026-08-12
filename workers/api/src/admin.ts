@@ -15,7 +15,7 @@ import {
 } from "@wa/shared";
 import { currentKeyVersion, decryptSecret, encryptSecret } from "./crypto.js";
 import { STORAGE_ALARM_BYTES } from "./cron.js";
-import type { Caller } from "./auth.js";
+import { denyAdmin, type Caller } from "./auth.js";
 import type { Env } from "./env.js";
 
 /**
@@ -37,7 +37,8 @@ import type { Env } from "./env.js";
 export const admin = new Hono<{ Bindings: Env; Variables: { caller: Caller } }>();
 
 admin.use("/api/admin/*", async (c, next) => {
-  if (c.get("caller").kind !== "platform_admin") return c.json({ error: "admin only" }, 403);
+  const denied = denyAdmin(c.get("caller"));
+  if (denied) return c.json(denied, 403);
   await next();
 });
 

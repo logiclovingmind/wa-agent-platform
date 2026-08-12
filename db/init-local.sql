@@ -71,6 +71,22 @@ create table if not exists auth.identities (
   unique (provider_id, provider)
 );
 
+-- GoTrue's factor table, to the columns `app.is_platform_admin()` reads.
+--
+-- Mirrored here rather than dodged with a `to_regclass` guard because the rule that
+-- consults it is conditional — a verified factor turns the aal2 requirement on, its
+-- absence leaves it off — and a two-branch guard that can only ever run on production
+-- is a guard nobody has tested. `status` uses GoTrue's own spelling.
+create table if not exists auth.mfa_factors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  friendly_name text,
+  factor_type text not null default 'totp',
+  status text not null default 'unverified',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- PostgREST sets request.jwt.claims per request. Tests set it with `set local`.
 create or replace function auth.jwt()
 returns jsonb

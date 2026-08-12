@@ -1,11 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { Button } from "./components/ui/button";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
 import Search from "./Search";
+import { MfaChallenge, MfaSetup, mfaOwed } from "./Mfa";
 
 /**
  * Split off rather than imported outright. Flowin carries recharts, which is most of
@@ -16,7 +17,7 @@ const Flowin = lazy(() => import("./Flowin"));
 const Admin = lazy(() => import("./Admin"));
 const Console = lazy(() => import("./Console"));
 
-type View = "inbox" | "pulse" | "admin" | "console";
+type View = "inbox" | "pulse" | "admin" | "console" | "security";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -40,11 +41,19 @@ export default function App() {
     inbox: false,
     admin: false,
     console: false,
+    security: false,
   });
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [orgId, setOrgId] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  // Held because it carries `factors`, which is what says whether this account owes a
+  // code. Kept from the lookup `loadRole` already makes rather than fetched again.
+  const [user, setUser] = useState<User | null>(null);
+  // Nothing renders until the account has been looked at once. Without this the admin
+  // shell paints for a frame before the challenge replaces it, which reads as the panel
+  // opening and then being taken away.
+  const [identified, setIdentified] = useState(false);
   // Set by the search box, consumed by the inbox. A hit is a conversation to open, and
   // it may well be older than the fifty rows the list holds.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
@@ -67,6 +76,7 @@ export default function App() {
 
   useEffect(() => {
     if (session) void loadRole();
+    else setIdentified(false);
   }, [session]);
 
   useEffect(() => {
@@ -82,6 +92,7 @@ export default function App() {
   async function loadRole() {
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return;
+    setUser(auth.user);
 
     // Every row, not maybeSingle: a user in two orgs would make that error out and
     // silently downgrade an owner to staff.
@@ -102,6 +113,7 @@ export default function App() {
       .eq("id", auth.user.id)
       .maybeSingle<{ is_platform_admin: boolean }>();
     setIsPlatformAdmin(me?.is_platform_admin ?? false);
+    setIdentified(true);
   }
 
   if (!ready) return <div className="p-8 text-muted-foreground">Loading…</div>;
@@ -109,6 +121,14 @@ export default function App() {
   // Ahead of every shell below, including the admin one: an account arriving on a
   // recovery link has nothing to do here until the password is actually changed.
   if (recovering) return <SetPassword onDone={() => setRecovering(false)} />;
+  if (!identified) return <div className="p-8 text-muted-foreground">Loading…</div>;
+  /**
+   * A factor is enrolled and this session has not used it. The password already made a
+   * session, so this cannot live in the sign-in form — App would be rendering the panel
+   * behind it. This screen is the courtesy; `denyAdmin` in the Worker is the lock, and
+   * it answers 403 to exactly the same condition.
+   */
+  if (mfaOwed(user, session.access_token)) return <MfaChallenge user={user} />;
 
   /**
    * Two products behind one login screen, told apart by whether the account belongs to
@@ -118,17 +138,36 @@ export default function App() {
    */
   const adminOnly = isPlatformAdmin && !isMember;
   if (adminOnly) {
+    // `view` starts on the client landing screen, which this shell does not have. The
+    // client list is the equivalent here, and naming it keeps its tab lit on arrival.
+    const adminView = view === "pulse" || view === "inbox" ? "admin" : view;
     return (
       <div className="flex h-dvh flex-col">
         <nav className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
           <img src="/logo.svg" alt="Logic Loving Mind" className="h-6 w-6 shrink-0" />
           <span className="text-sm font-semibold">Platform admin</span>
+          {/* Three named destinations rather than the old two-way toggle, which had no
+              room for a third and would have sent "Security" back to the client list. */}
           <Button
-            variant={view === "console" ? "default" : "ghost"}
+            variant={adminView === "admin" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setView(view === "console" ? "admin" : "console")}
+            onClick={() => setView("admin")}
+          >
+            All clients
+          </Button>
+          <Button
+            variant={adminView === "console" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setView("console")}
           >
             Training console
+          </Button>
+          <Button
+            variant={adminView === "security" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setView("security")}
+          >
+            Security
           </Button>
           <span className="text-xs text-muted-foreground">
             {session.user.email} — no client inbox is readable from this account
@@ -140,7 +179,13 @@ export default function App() {
         </nav>
         <div className="min-h-0 flex-1">
           <Suspense fallback={<Loading />}>
-            {view === "console" ? <Console /> : <Admin />}
+            {adminView === "security" ? (
+              <MfaSetup />
+            ) : adminView === "console" ? (
+              <Console />
+            ) : (
+              <Admin />
+            )}
           </Suspense>
         </div>
       </div>

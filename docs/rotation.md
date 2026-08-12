@@ -48,6 +48,28 @@ the Meta dashboard.
 
 Do not delete `MASTER_KEY_V1` until a real WhatsApp message has produced a real reply.
 
+### Checking the copy you already have
+
+Rotation is the answer to a lost key. Before assuming it is lost, prove it: take a
+ciphertext the live Worker produced and try to open it with the copy. AES-GCM
+authenticates, so a wrong key throws rather than returning garbage — the result is
+never ambiguous.
+
+```sql
+-- Supabase SQL editor. Ciphertext is safe to copy around; that is the point of it.
+select phone_number_id, token_ciphertext, token_iv, token_key_version from wa_accounts;
+```
+
+```bash
+read -rs MASTER_KEY; export MASTER_KEY
+pnpm tsx scripts/verify-key.ts --ciphertext '<token_ciphertext>' --iv '<token_iv>'
+unset MASTER_KEY
+```
+
+A FAIL when `token_key_version` is not 1 means the copy was checked against the wrong
+version, not that the copy is bad. Do this while the only sealed credential belongs to
+a sandbox number.
+
 ---
 
 ## 2. Database password — brief outage, no code change

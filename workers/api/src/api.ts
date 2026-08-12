@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createOrgDb, createServiceClient } from "@wa/shared";
 import { admin } from "./admin.js";
-import { authenticate, type Caller } from "./auth.js";
+import { authenticate, denyAdmin, type Caller } from "./auth.js";
 import type { Env } from "./env.js";
 
 /**
@@ -194,7 +194,8 @@ api.post("/api/conversations/:id/export", async (c) => {
  * talks. Their own spend is `usage_daily`, which is per-org under RLS.
  */
 api.get("/api/usage/balance", async (c) => {
-  if (c.get("caller").kind !== "platform_admin") return c.json({ error: "admin only" }, 403);
+  const denied = denyAdmin(c.get("caller"));
+  if (denied) return c.json(denied, 403);
 
   // The credits endpoint is a sibling of the OpenAI-compatible surface, not part of it:
   // LLM_BASE_URL ends in /v1, this lives at /api/v1/credits on the same origin.

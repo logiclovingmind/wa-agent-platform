@@ -1,7 +1,7 @@
 -- The three logins the platform is meant to be looked at through, and the un-merge of
 -- the single account that was previously doing all three jobs.
 --
---   logiclovingmind@gmail.com  platform admin. No org, no membership, no inbox.
+--   admin@logiclovingmind.com  platform admin. No org, no membership, no inbox.
 --   owner@demo.com             owner of the demo org.
 --   staff@demo.com             staff of the demo org.
 --
@@ -38,9 +38,33 @@ create temporary table provisioned (email text primary key, password text, role 
 on commit drop;
 
 insert into provisioned values
-  ('logiclovingmind@gmail.com', :'admin_pw', null),
+  ('admin@logiclovingmind.com', :'admin_pw', null),
   ('owner@demo.com',            :'demo_pw',  'owner'),
   ('staff@demo.com',            :'demo_pw',  'staff');
+
+-- The admin was originally provisioned as a personal gmail address. Renamed in place
+-- rather than letting the blocks below fail to find the new address and insert a second
+-- account: `audit_log.actor_user_id` points at this id, so every admin action ever taken
+-- would be orphaned from the account that took it — and the old row would remain, still
+-- carrying is_platform_admin. Two admin logins, one of them forgotten.
+--
+-- Guarded both ways, so a re-run is a no-op: it fires only while the old address is
+-- still present and the new one is not.
+update auth.users
+   set email = 'admin@logiclovingmind.com', updated_at = now()
+ where email = 'logiclovingmind@gmail.com'
+   and not exists (select 1 from auth.users where email = 'admin@logiclovingmind.com');
+
+-- identity_data keeps its own copy of the address and nothing holds the two in step.
+-- Left stale, it is the kind of disagreement that surfaces months later as a login that
+-- half works.
+update auth.identities i
+   set identity_data = i.identity_data || jsonb_build_object('email', u.email),
+       updated_at = now()
+  from auth.users u
+ where i.user_id = u.id
+   and i.provider = 'email'
+   and i.identity_data ->> 'email' is distinct from u.email;
 
 -- Update-then-insert rather than ON CONFLICT: GoTrue's uniqueness on email is a partial
 -- index (`where is_sso_user = false`), which ON CONFLICT cannot infer a target from, so
@@ -155,7 +179,10 @@ from auth.users u
 join provisioned p on p.email = u.email
 on conflict (id) do update
   set org_id = excluded.org_id,
-      is_platform_admin = excluded.is_platform_admin;
+      is_platform_admin = excluded.is_platform_admin,
+      -- Carried too, or the application table keeps the old address after a rename and
+      -- the admin panel's own user list disagrees with the login it is describing.
+      email = excluded.email;
 
 -- This is the un-merge. The admin account held an owner membership of the demo org,
 -- which is precisely what made the admin panel and the demo dashboard the same screen
@@ -179,5 +206,5 @@ select u.email,
 from public.users pu
 join auth.users u on u.id = pu.id
 left join org_members m on m.user_id = pu.id
-where u.email in ('logiclovingmind@gmail.com', 'owner@demo.com', 'staff@demo.com')
+where u.email in ('admin@logiclovingmind.com', 'owner@demo.com', 'staff@demo.com')
 order by u.email;

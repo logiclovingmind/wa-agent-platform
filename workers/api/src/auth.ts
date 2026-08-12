@@ -12,7 +12,69 @@ import type { Env } from "./env.js";
  */
 export type Caller =
   | { kind: "member"; userId: string; orgId: string; role: "owner" | "staff" }
-  | { kind: "platform_admin"; userId: string };
+  // `mfa` sits on this variant alone because it is admin privilege that is worth a
+  // second factor, and a client route then has no field it could forget to check. A
+  // member holding a factor is still challenged at sign-in — that is GoTrue's doing,
+  // not ours.
+  | { kind: "platform_admin"; userId: string; mfa: MfaState };
+
+/**
+ * Whether a second factor has been satisfied — and first, whether one is owed at all.
+ *
+ * `none` is what makes this safe to deploy: an account with no verified factor is owed
+ * nothing, so the enrolment screen is reachable from an ordinary session and the guard
+ * cannot lock out an admin who has not set it up yet. The demand appears the moment the
+ * factor does, and never before.
+ */
+export type MfaState = "none" | "satisfied" | "required";
+
+/** A factor GoTrue returns on the user object. Unverified ones are half-finished
+ *  enrolments and demand nothing. */
+type Factor = { status?: string };
+
+/**
+ * The session's assurance level, read from the token's own claims.
+ *
+ * Decoding without verifying is normally the classic JWT mistake; it is sound here only
+ * because it happens *after* `/auth/v1/user` has answered 200 for this exact string,
+ * which is what establishes the signature. Doing it this way keeps the promise made
+ * above — the JWT secret never enters the Worker — and costs no second round trip.
+ *
+ * Anything unreadable returns null, which reads as "not aal2" and therefore denies. A
+ * malformed token must never be the thing that satisfies the requirement.
+ */
+function sessionAal(token: string): string | null {
+  const segment = token.split(".")[1];
+  if (!segment) return null;
+  try {
+    const b64 = segment.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+    return (JSON.parse(payload) as { aal?: string }).aal ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function mfaState(token: string, factors: Factor[] | undefined): MfaState {
+  if (!factors?.some((f) => f.status === "verified")) return "none";
+  return sessionAal(token) === "aal2" ? "satisfied" : "required";
+}
+
+/**
+ * The whole admission rule for admin routes, in one place because it has two call
+ * sites — the `/api/admin/*` middleware and `/api/usage/balance` — and a gate that
+ * exists twice is a gate that eventually disagrees with itself.
+ *
+ * Returns the refusal, or null to let the caller through. `mfa_required` is on the body
+ * so the dashboard can tell "you are not an admin" apart from "you are, but this
+ * session is one factor short" — the second is fixed by typing six digits, and a screen
+ * that said "admin only" to that would be lying.
+ */
+export function denyAdmin(caller: Caller): { error: string; mfa_required?: true } | null {
+  if (caller.kind !== "platform_admin") return { error: "admin only" };
+  if (caller.mfa === "required") return { error: "two-factor required", mfa_required: true };
+  return null;
+}
 
 /**
  * Who is calling, and which org they may act on.
@@ -30,7 +92,9 @@ export async function authenticate(env: Env, authorization: string | undefined):
   });
   if (!res.ok) return null;
 
-  const user = (await res.json()) as { id?: string };
+  // `factors` rides on the call already being made — the same one supabase-js reads for
+  // listFactors() — so the second factor costs no extra I/O and no extra CPU.
+  const user = (await res.json()) as { id?: string; factors?: Factor[] };
   if (!user.id) return null;
 
   const sb = createServiceClient(env);
@@ -58,7 +122,9 @@ export async function authenticate(env: Env, authorization: string | undefined):
     .maybeSingle<{ is_platform_admin: boolean }>();
 
   if (admin.error) throw new Error(`admin lookup failed: ${admin.error.message}`);
-  if (admin.data?.is_platform_admin) return { kind: "platform_admin", userId: user.id };
+  if (admin.data?.is_platform_admin) {
+    return { kind: "platform_admin", userId: user.id, mfa: mfaState(token, user.factors) };
+  }
 
   return null;
 }
