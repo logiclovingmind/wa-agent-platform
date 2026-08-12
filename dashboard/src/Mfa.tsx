@@ -148,6 +148,18 @@ export function MfaSetup() {
   async function begin() {
     setBusy(true);
     setError(null);
+
+    // `cancel()` clears a pending factor, but a reload or a closed tab does not, and
+    // enrolment writes the factor before any code is typed. GoTrue then refuses the
+    // next attempt outright — the friendly name is already taken — and the screen
+    // becomes unusable with no way out of it from the UI.
+    const { data: current } = await supabase.auth.getUser();
+    for (const stale of current.user?.factors ?? []) {
+      if (stale.status !== "verified") {
+        await supabase.auth.mfa.unenroll({ factorId: stale.id });
+      }
+    }
+
     const { data, error } = await supabase.auth.mfa.enroll({
       factorType: "totp",
       // Shown inside the authenticator app beside the code, where "Supabase" or a
