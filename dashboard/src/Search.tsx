@@ -81,7 +81,7 @@ export default function Search({
   const short = query.trim().length > 0 && query.trim().length < MIN;
 
   return (
-    <div ref={box} className="relative w-72">
+    <div ref={box} className="relative w-full md:w-72">
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}

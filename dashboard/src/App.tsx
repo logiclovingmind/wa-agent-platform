@@ -1,14 +1,20 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { Button } from "./components/ui/button";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
-import Flowin from "./Flowin";
 import Search from "./Search";
-import Admin from "./Admin";
-import Console from "./Console";
+
+/**
+ * Split off rather than imported outright. Flowin carries recharts, which is most of
+ * the bundle; Admin and Console are ours and no client account can ever open them. On a
+ * phone that is the difference between the inbox arriving and the charts arriving first.
+ */
+const Flowin = lazy(() => import("./Flowin"));
+const Admin = lazy(() => import("./Admin"));
+const Console = lazy(() => import("./Console"));
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -108,14 +114,20 @@ export default function App() {
             Sign out
           </Button>
         </nav>
-        <div className="min-h-0 flex-1">{view === "console" ? <Console /> : <Admin />}</div>
+        <div className="min-h-0 flex-1">
+          <Suspense fallback={<Loading />}>
+            {view === "console" ? <Console /> : <Admin />}
+          </Suspense>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex h-screen flex-col">
-      <nav className="flex items-center gap-1 border-b border-border px-3 py-2">
+      {/* Wraps rather than scrolls: on a phone the search box takes a line of its own
+          below the tabs, which is where a thumb expects it anyway. */}
+      <nav className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
         <Button
           variant={view === "pulse" ? "default" : "ghost"}
           size="sm"
@@ -153,13 +165,15 @@ export default function App() {
         )}
         <span className="flex-1" />
         {orgId && (
-          <Search
-            orgId={orgId}
-            onOpen={(id) => {
-              setView("inbox");
-              setJumpTo(id);
-            }}
-          />
+          <div className="order-last w-full md:order-none md:w-auto">
+            <Search
+              orgId={orgId}
+              onOpen={(id) => {
+                setView("inbox");
+                setJumpTo(id);
+              }}
+            />
+          </div>
         )}
         <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
           Sign out
@@ -167,16 +181,22 @@ export default function App() {
       </nav>
 
       <div className="min-h-0 flex-1">
-        {view === "admin" && isPlatformAdmin ? (
-          <Admin />
-        ) : view === "console" && isPlatformAdmin ? (
-          <Console />
-        ) : view === "pulse" ? (
-          <Flowin orgId={orgId} />
-        ) : (
-          <Inbox isOwner={isOwner} jumpTo={jumpTo} />
-        )}
+        <Suspense fallback={<Loading />}>
+          {view === "admin" && isPlatformAdmin ? (
+            <Admin />
+          ) : view === "console" && isPlatformAdmin ? (
+            <Console />
+          ) : view === "pulse" ? (
+            <Flowin orgId={orgId} />
+          ) : (
+            <Inbox isOwner={isOwner} jumpTo={jumpTo} />
+          )}
+        </Suspense>
       </div>
     </div>
   );
+}
+
+function Loading() {
+  return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
 }

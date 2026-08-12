@@ -145,7 +145,15 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
 
   return (
     <div className="flex h-full">
-      <aside className="w-80 shrink-0 overflow-y-auto border-r border-border">
+      {/* One pane at a time on a phone, both side by side from `md`. A 320px list next
+          to a thread is two columns fighting over a 390px screen; the list is the
+          screen until a conversation is picked, and then the thread is. */}
+      <aside
+        className={cn(
+          "w-full shrink-0 overflow-y-auto border-border md:w-80 md:border-r",
+          open && "hidden md:block",
+        )}
+      >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <span className="text-sm font-semibold">Conversations</span>
           <Button variant="ghost" size="sm" disabled={exporting} onClick={() => void exportCsv()}>
@@ -240,10 +248,11 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
           flags={flags.get(open.id) ?? []}
           lead={leads.get(open.id) ?? null}
           isOwner={isOwner}
+          onBack={() => setOpenId(null)}
           onChanged={load}
         />
       ) : (
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        <div className="hidden flex-1 items-center justify-center text-sm text-muted-foreground md:flex">
           Pick a conversation.
         </div>
       )}

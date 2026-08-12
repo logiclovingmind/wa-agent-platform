@@ -45,12 +45,15 @@ export default function Thread({
   flags,
   lead,
   isOwner,
+  onBack,
   onChanged,
 }: {
   conversation: Conversation;
   flags: SafetyFlag[];
   lead: Lead | null;
   isOwner: boolean;
+  /** Closes the thread on a phone, where the list is not on screen beside it. */
+  onBack: () => void;
   onChanged: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -185,24 +188,35 @@ export default function Thread({
   }
 
   return (
-    <div className="flex flex-1 flex-col">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div>
-          <div className="text-sm font-medium">{customerLabel(conversation)}</div>
-          <div className="text-xs text-muted-foreground">
-            {/* The number as well as the name here, unlike the list: this is where an
-                owner goes to look a customer up in their own records. */}
-            {conversation.customer_name && <>+{conversation.customer_wa_id}{" · "}</>}
-            {human ? "You are replying" : "Bot is replying"}
-            {left && (
-              <>
-                {" · "}
-                <span className={cn(left.urgent && "font-medium text-destructive")}>
-                  {left.text}
-                </span>
-                {!left.closed && ` · closes ${ist(conversation.window_expires_at)}`}
-              </>
-            )}
+    <div className="flex min-w-0 flex-1 flex-col">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 shrink-0 md:hidden"
+            onClick={onBack}
+            aria-label="Back to conversations"
+          >
+            ←
+          </Button>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{customerLabel(conversation)}</div>
+            <div className="text-xs text-muted-foreground">
+              {/* The number as well as the name here, unlike the list: this is where an
+                  owner goes to look a customer up in their own records. */}
+              {conversation.customer_name && <>+{conversation.customer_wa_id}{" · "}</>}
+              {human ? "You are replying" : "Bot is replying"}
+              {left && (
+                <>
+                  {" · "}
+                  <span className={cn(left.urgent && "font-medium text-destructive")}>
+                    {left.text}
+                  </span>
+                  {!left.closed && ` · closes ${ist(conversation.window_expires_at)}`}
+                </>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
