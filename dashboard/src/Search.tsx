@@ -87,7 +87,7 @@ export default function Search({
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => e.key === "Escape" && setQuery("")}
         placeholder="Search people, leads, messages"
-        className="h-8 text-sm"
+        className="text-sm md:h-8"
       />
 
       {(hits.length > 0 || short || error) && (
@@ -104,7 +104,7 @@ export default function Search({
                 setQuery("");
                 setHits([]);
               }}
-              className="block w-full border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-muted"
+              className="block w-full border-b border-border/60 px-3 py-3 text-left last:border-0 hover:bg-muted md:py-2"
             >
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="truncate font-medium">

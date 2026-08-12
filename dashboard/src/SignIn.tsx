@@ -19,16 +19,21 @@ export default function SignIn() {
 
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <form onSubmit={submit} className="w-80 space-y-4">
-        <h1 className="text-lg font-semibold">Inbox</h1>
+      <form onSubmit={submit} className="w-80 max-w-full space-y-4 px-4">
+        {/* The one screen the full lockup fits on. The wordmark is twenty times wider
+            than it is tall, so everywhere else in the app it is the mark alone. */}
+        <div className="mb-8 flex flex-col items-center gap-4">
+          <img src="/logo.svg" alt="" className="h-12 w-12" />
+          <img src="/wordmark.svg" alt="Logic Loving Mind" className="w-56" />
+        </div>
         <input
           type="email"
           required
           autoComplete="username"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@salon.com"
-          className="w-full rounded-md border border-border px-3 py-2 text-sm"
+          placeholder="you@business.com"
+          className="h-11 w-full rounded-md border border-border px-3 text-base md:h-10 md:text-sm"
         />
         <input
           type="password"
@@ -37,7 +42,7 @@ export default function SignIn() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
-          className="w-full rounded-md border border-border px-3 py-2 text-sm"
+          className="h-11 w-full rounded-md border border-border px-3 text-base md:h-10 md:text-sm"
         />
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={busy} className="w-full">

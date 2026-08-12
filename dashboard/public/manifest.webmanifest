@@ -1,6 +1,6 @@
 {
-  "name": "Flowin",
-  "short_name": "Flowin",
+  "name": "Dashboard — Logic Loving Mind",
+  "short_name": "Dashboard",
   "description": "WhatsApp conversations, what each customer asked for, and who is still owed a call.",
   "start_url": "/",
   "scope": "/",

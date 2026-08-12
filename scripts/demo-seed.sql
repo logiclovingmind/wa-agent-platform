@@ -114,7 +114,43 @@ join (values
   -- 24 hours, so this is what the demo looks like the morning after anyway — and it is
   -- the only place the flag can have come from the picture and nothing else.
   ('919990010009', 1, 'inbound',  null,                                                    'image', false, true,  null,   interval '5 minutes'),
-  ('919990010009', 2, 'outbound', 'I hear you, and I don''t want to leave you with a bot right now. I''m bringing a person from our team into this conversation.', 'text', false, true, 'read', interval '4 minutes')
+  ('919990010009', 2, 'outbound', 'I hear you, and I don''t want to leave you with a bot right now. I''m bringing a person from our team into this conversation.', 'text', false, true, 'read', interval '4 minutes'),
+
+  -- How each of those threads began. Every demo above used to open on its own punchline —
+  -- nobody's first message to a business is "the fan is making this noise" — and a client
+  -- reads that as the product having no memory of the conversation.
+  --
+  -- Numbered from 11, not renumbered from 1: `demo-<wa_id>-1` is the storage path the
+  -- media objects were uploaded to (scripts/demo-media.ts), so seq 1 and 2 cannot move.
+  -- Order on screen is by created_at, which these sit before, so the numbers never show.
+  ('919990010001', 11, 'inbound',  'Hi, is this the Indiranagar centre?',                   'text', false, true, null,   interval '25 minutes'),
+  ('919990010001', 12, 'outbound', 'It is — 100 Feet Road, above the HDFC branch.',         'text', false, true, 'read', interval '24 minutes'),
+  ('919990010001', 13, 'inbound',  'I am looking at the weekend data science batch',        'text', false, true, null,   interval '12 minutes'),
+  ('919990010001', 14, 'outbound', 'That one runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 'text', false, true, 'read', interval '11 minutes'),
+  ('919990010002', 11, 'inbound',  'hello, I filled the form on your website',              'text', false, true, null,   interval '185 minutes'),
+  ('919990010002', 12, 'outbound', 'Thanks for getting in touch! Which course were you looking at?', 'text', false, true, 'read', interval '184 minutes'),
+  ('919990010002', 13, 'inbound',  'data science, the weekend one',                         'text', false, true, null,   interval '150 minutes'),
+  ('919990010002', 14, 'outbound', 'The next weekend batch begins on the 6th and four seats are open. Shall I tell you the fees?', 'text', false, true, 'read', interval '149 minutes'),
+  ('919990010003', 11, 'inbound',  'is there an instalment option for the fees',            'text', false, true, null,   interval '33 minutes'),
+  ('919990010003', 12, 'outbound', 'There is — the fee can be paid in two instalments, by UPI, card or bank transfer.', 'text', false, true, 'read', interval '32 minutes'),
+  ('919990010003', 13, 'inbound',  'and if I need to change batch later?',                  'text', false, true, null,   interval '20 minutes'),
+  ('919990010003', 14, 'outbound', 'A transfer to the next batch is allowed up to the second session.', 'text', false, true, 'read', interval '19 minutes'),
+  ('919990010004', 11, 'inbound',  'hi is there a coding class',                            'text', false, true, null,   interval '14 minutes'),
+  ('919990010004', 12, 'outbound', 'We teach Python as part of the Data Science course, from the first session.', 'text', false, true, 'read', interval '13 minutes'),
+  ('919990010005', 11, 'inbound',  'hi, quick question about what you have available',      'text', false, true, null,   interval '22 minutes'),
+  ('919990010005', 12, 'outbound', 'Of course — what are you looking for?',                 'text', false, true, 'read', interval '21 minutes'),
+  ('919990010006', 11, 'inbound',  'hi, I need help with something at home',                'text', false, true, null,   interval '24 minutes'),
+  ('919990010006', 12, 'outbound', 'Happy to help — what seems to be the trouble?',         'text', false, true, 'read', interval '23 minutes'),
+  ('919990010007', 11, 'inbound',  'hi, can I send a voice note? typing is hard right now', 'text', false, true, null,   interval '20 minutes'),
+  ('919990010007', 12, 'outbound', 'Please go ahead.',                                      'text', false, true, 'read', interval '19 minutes'),
+  ('919990010008', 11, 'inbound',  'hi, I enquired last year about the evening batch',      'text', false, true, null,   interval '60 minutes'),
+  ('919990010008', 12, 'outbound', 'I can see an enquiry from this number. Would you like the current timings?', 'text', false, true, 'read', interval '59 minutes'),
+  ('919990010008', 13, 'inbound',  'no, I am not interested any more',                      'text', false, true, null,   interval '40 minutes'),
+  ('919990010008', 14, 'outbound', 'Understood — I won''t follow up.',                      'text', false, true, 'read', interval '39 minutes'),
+  -- Deliberately nothing a text prefilter could catch. The flag on this conversation has
+  -- to have come from the picture alone, or the demo below it proves nothing.
+  ('919990010009', 11, 'inbound',  'hi, are you open today?',                               'text', false, true, null,   interval '20 minutes'),
+  ('919990010009', 12, 'outbound', 'We are — 9:30am to 7pm, Monday to Saturday.',           'text', false, true, 'read', interval '19 minutes')
 ) as m(wa_id, seq, dir, body, type, stored, screened, status, age) on m.wa_id = c.customer_wa_id;
 
 insert into safety_flags (org_id, conversation_id, message_id, kind)
@@ -191,6 +227,15 @@ cross join lateral (
          [1 + ((n.i * 17) % 40)])::text || ' hours')::interval
     + (((n.i * 23) % 60)::text || ' minutes')::interval
   ) at time zone 'Asia/Kolkata' as at
+) t0
+-- The day offset reaches zero for every thirtieth row, and the hour picked for it is an
+-- hour of today that may not have arrived. Those rows sorted above everything — the inbox
+-- orders by last message, so the first thing a client saw was a dozen two-line stubs from
+-- this evening, dated later than now, with a 24-hour window already counting down from
+-- the future. Pushed a month back instead of forward: today keeps only the hours that
+-- have actually happened, and the back catalogue is 31 days deep rather than 30.
+cross join lateral (
+  select case when t0.at > now() then t0.at - interval '30 days' else t0.at end as at
 ) t;
 
 insert into messages
@@ -316,6 +361,179 @@ cross join (values
   (24, 'Done — a seat is held for you for the batch starting on the 6th. Someone from our team will confirm by tomorrow.')
 ) as t(seq, body)
 where c.customer_wa_id = '919990030001';
+
+-- ---------------------------------------------------------------------------
+-- The top of the inbox — a dozen conversations run start to finish
+-- ---------------------------------------------------------------------------
+--
+-- The nine above are one exchange each because each is there to show one control. The 990
+-- below are two messages each because they are volume. Between them the inbox opened on a
+-- wall of stubs, and a client scrolling it sees a product that answers once and stops.
+--
+-- These are what the assistant actually does on a normal day: somebody asks, it answers,
+-- they push back on the price, it explains, and the thread lands somewhere — a seat held,
+-- a call asked for, a person brought in. Everything said here matches the KB at the foot
+-- of this file, so the training console cannot contradict the inbox.
+--
+-- Newest in the org, so they lead the list. The three that end unresolved carry a handoff
+-- state, which puts them in "Needs you" above their own recency — a full thread that is
+-- genuinely waiting is a better first row than a two-line one that is.
+insert into conversations
+  (org_id, wa_account_id, customer_wa_id, customer_name, handoff_state,
+   last_message_at, window_expires_at)
+select w.org_id, w.id, v.wa_id, v.name, v.state::handoff_state, now(), now()
+from (select org_id, id from wa_accounts order by created_at limit 1) w
+cross join (values
+  ('919990040001', 'Deepak Shetty',   'bot'),
+  ('919990040002', 'Latha Krishnan',  'bot'),
+  ('919990040003', 'Arjun Pillai',    'requested'),
+  ('919990040004', 'Nisha Bhat',      'bot'),
+  ('919990040005', 'Farhan Qureshi',  'bot'),
+  ('919990040006', 'Shruti Desai',    'bot'),
+  ('919990040007', 'Gopal Menon',     'bot'),
+  -- Taken over and answered by a person, so the last two turns are the owner's and no
+  -- usage row is written for them.
+  ('919990040008', 'Ritu Agarwal',    'human'),
+  ('919990040009', 'Praveen Kumar',   'bot'),
+  -- Unhappy, and the assistant stops rather than argues.
+  ('919990040010', 'Anjali Verma',    'requested'),
+  ('919990040011', 'Manoj Rathi',     'bot'),
+  ('919990040012', 'Sneha Pai',       'bot')
+) as v(wa_id, name, state);
+
+-- Minutes ago rather than an interval per row: the gaps are the point. A customer answers
+-- in seconds while they are at their phone and then goes quiet for an hour, and a thread
+-- whose turns are evenly spaced reads as generated at a glance.
+insert into messages
+  (org_id, conversation_id, wa_message_id, direction, body, type, safety_screened, status, status_at, created_at)
+select c.org_id, c.id, 'demo-' || c.customer_wa_id || '-' || t.seq, t.dir::message_direction,
+       t.body, 'text', true,
+       case when t.dir = 'outbound' then 'read' end,
+       case when t.dir = 'outbound' then now() - make_interval(mins => t.mins) end,
+       now() - make_interval(mins => t.mins)
+from conversations c
+join (values
+  -- Fees, then the price objection, then how to pay it. The most common thread there is.
+  ('919990040001', 1, 'inbound',  'Hi, do you have any weekend classes?', 47),
+  ('919990040001', 2, 'outbound', 'We do — Data Science runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 46),
+  ('919990040001', 3, 'inbound',  'Sounds good. What is the total fee?', 41),
+  ('919990040001', 4, 'outbound', '₹18,000 for the full course, or ₹4,500 per module if you would rather take them one at a time.', 40),
+  ('919990040001', 5, 'inbound',  'that is a lot in one go', 33),
+  ('919990040001', 6, 'outbound', 'It can be split into two instalments if that is easier — UPI, card or bank transfer, whichever suits you.', 32),
+  ('919990040001', 7, 'inbound',  'two instalments works. UPI is fine for me', 12),
+  ('919990040001', 8, 'outbound', 'Noted. I have put you down for the batch beginning on the 6th, and someone from our team will send the payment details.', 3),
+
+  -- A parent asking on somebody else's behalf, which is why `leads.name` exists at all.
+  ('919990040002', 1, 'inbound',  'my daughter finished her BSc last year, would this course be useful for her?', 182),
+  ('919990040002', 2, 'outbound', 'It is a common starting point after a science degree — no coding background is needed, we teach Python from the first session.', 181),
+  ('919990040002', 3, 'inbound',  'she has interviews going on, mornings are busy', 175),
+  ('919990040002', 4, 'outbound', 'The weekday batch runs Monday to Thursday, 7pm to 9pm, which may suit her better.', 174),
+  ('919990040002', 5, 'inbound',  'and the fee is the same?', 170),
+  ('919990040002', 6, 'outbound', 'Yes — ₹18,000 for the twelve weeks, or ₹4,500 a module.', 169),
+  ('919990040002', 7, 'inbound',  'can she attend one class first', 96),
+  ('919990040002', 8, 'outbound', 'She is welcome to sit in on the first session before deciding.', 95),
+  ('919990040002', 9, 'inbound',  'ok I will speak to her and let you know', 63),
+  ('919990040002', 10, 'outbound', 'Please do. I have kept a note against your number, so you will not have to explain it again.', 62),
+
+  -- Asked for a call. Ends in "Needs you" with the whole reason already on the screen.
+  ('919990040003', 1, 'inbound',  'hello', 39),
+  ('919990040003', 2, 'outbound', 'Hello! How can I help?', 38),
+  ('919990040003', 3, 'inbound',  'I wanted to know about the digital marketing course', 36),
+  ('919990040003', 4, 'outbound', 'Eight weeks, weekends only, 2pm to 5pm. Fees are ₹12,000.', 35),
+  ('919990040003', 5, 'inbound',  'is it practical or mostly theory', 30),
+  ('919990040003', 6, 'outbound', 'It is hands-on — you work on live campaigns through the course.', 29),
+  ('919990040003', 7, 'inbound',  'can someone call me, I have a few more questions', 8),
+  ('919990040003', 8, 'outbound', 'Of course — someone from our team will call you shortly.', 7),
+
+  ('919990040004', 1, 'inbound',  'I enrolled for the batch on the 6th but I have to travel that week', 300),
+  ('919990040004', 2, 'outbound', 'That is alright — a transfer to the next batch is allowed up to the second session.', 299),
+  ('919990040004', 3, 'inbound',  'so I do not lose the fee?', 295),
+  ('919990040004', 4, 'outbound', 'No, the fee moves with you. It is only a refund that is not possible once a batch has begun.', 294),
+  ('919990040004', 5, 'inbound',  'ok please move me to the next one', 291),
+  ('919990040004', 6, 'outbound', 'Noted — I have passed this on, and someone from our team will confirm the new batch date.', 290),
+
+  -- A no, handled well. Not every thread should end in a sale.
+  ('919990040005', 1, 'inbound',  'Do you run the data science course online?', 150),
+  ('919990040005', 2, 'outbound', 'It runs in person at our Indiranagar centre — there is no online batch at the moment.', 149),
+  ('919990040005', 3, 'inbound',  'I am in Mysuru so that is difficult', 145),
+  ('919990040005', 4, 'outbound', 'Understood. I can note your number and let you know if an online batch opens.', 144),
+  ('919990040005', 5, 'inbound',  'yes please do that', 140),
+  ('919990040005', 6, 'outbound', 'Done — nothing else is needed from you for now.', 139),
+
+  ('919990040006', 1, 'inbound',  'spoken english class timings?', 210),
+  ('919990040006', 2, 'outbound', 'Weekday mornings, 8am to 9am, for six weeks. Fees are ₹6,000.', 209),
+  ('919990040006', 3, 'inbound',  'where exactly is the centre, I am coming from Domlur', 205),
+  ('919990040006', 4, 'outbound', 'Indiranagar, 100 Feet Road, above the HDFC branch — about fifteen minutes from Domlur.', 204),
+  ('919990040006', 5, 'inbound',  'ok that works, when does it start', 200),
+  ('919990040006', 6, 'outbound', 'A new batch opens most months. I have noted your interest and someone will confirm the next start date.', 199),
+
+  -- The one where the assistant has to say no. Placement help is offered, a job is not
+  -- promised and no salary is quoted — the sector output check would strip either.
+  ('919990040007', 1, 'inbound',  'after this course will I get a job?', 120),
+  ('919990040007', 2, 'outbound', 'We help with placement — CV review and interview practice — but I would not want to promise you a job, and I cannot quote salary figures.', 119),
+  ('919990040007', 3, 'inbound',  'ok fair enough. what kind of help exactly', 116),
+  ('919990040007', 4, 'outbound', 'CV review, mock interviews, and introductions where we have them. The rest depends on how the interviews go.', 115),
+  ('919990040007', 5, 'inbound',  'and the certificate?', 112),
+  ('919990040007', 6, 'outbound', 'A certificate is issued on 80% attendance.', 111),
+  ('919990040007', 7, 'inbound',  'got it, I will think about it', 108),
+  ('919990040007', 8, 'outbound', 'Take your time. I have made a note, so you will not have to start over when you come back.', 107),
+
+  -- The handover, mid-thread and visible: the assistant stops, a person picks it up and
+  -- signs their name, and the last two replies cost nothing.
+  ('919990040008', 1, 'inbound',  'I paid the first instalment yesterday but have not received a receipt', 95),
+  ('919990040008', 2, 'outbound', 'Let me look into that — one moment.', 94),
+  ('919990040008', 3, 'inbound',  'sure', 90),
+  ('919990040008', 4, 'outbound', 'I am bringing someone from our team in, they can check the payment properly.', 89),
+  ('919990040008', 5, 'inbound',  'thank you', 60),
+  ('919990040008', 6, 'outbound', 'Hi, this is Ananya from the office. I can see your payment against the weekend batch — the receipt went to the wrong email, I am resending it now.', 22),
+  ('919990040008', 7, 'inbound',  'oh perfect, thank you', 18),
+  ('919990040008', 8, 'outbound', 'Sent. Anything else, just message here.', 14),
+
+  ('919990040009', 1, 'inbound',  'how many students in one batch?', 260),
+  ('919990040009', 2, 'outbound', 'Batches are capped at twenty.', 259),
+  ('919990040009', 3, 'inbound',  'and if I miss a class?', 256),
+  ('919990040009', 4, 'outbound', 'Sessions are not repeated, but the material is shared and you can ask in the next class. A certificate needs 80% attendance.', 255),
+  ('919990040009', 5, 'inbound',  'fine. I will come on the 6th', 250),
+  ('919990040009', 6, 'outbound', 'Good — I have noted you for the batch beginning on the 6th.', 249),
+
+  ('919990040010', 1, 'inbound',  'I want to cancel and get a refund', 45),
+  ('919990040010', 2, 'outbound', 'I am sorry to hear that. Has your batch already begun?', 44),
+  ('919990040010', 3, 'inbound',  'yes, two sessions so far', 43),
+  ('919990040010', 4, 'outbound', 'Refunds are not possible once a batch has begun, though a transfer to the next batch is allowed up to the second session.', 42),
+  ('919990040010', 5, 'inbound',  'that is not what I was told when I paid', 25),
+  ('919990040010', 6, 'outbound', 'I would rather not settle that over a message — let me bring someone from our team in.', 24),
+  ('919990040010', 7, 'inbound',  'please do', 21),
+  ('919990040010', 8, 'outbound', 'Someone will reply here shortly.', 20),
+
+  -- Hinglish in, Hinglish out. `organizations.voice` at the foot of this file says to
+  -- mirror the customer, and this is the thread that shows it doing so.
+  ('919990040011', 1, 'inbound',  'bhai weekend batch me abhi seat hai kya', 70),
+  ('919990040011', 2, 'outbound', 'Haan, abhi chaar seat baaki hain — batch 6 tareekh se shuru ho raha hai.', 69),
+  ('919990040011', 3, 'inbound',  'fees kitni hai', 66),
+  ('919990040011', 4, 'outbound', '₹18,000 poore course ka, ya ₹4,500 per module agar ek ek karke lena ho.', 65),
+  ('919990040011', 5, 'inbound',  'ek baar dekhne aa sakta hoon?', 58),
+  ('919990040011', 6, 'outbound', 'Bilkul — pehli class attend karke decide kar sakte hain.', 57),
+  ('919990040011', 7, 'inbound',  'theek hai, main Saturday aa jaunga', 52),
+  ('919990040011', 8, 'outbound', 'Badhiya. Saturday 10 baje, Indiranagar, 100 Feet Road, HDFC branch ke upar.', 51),
+
+  ('919990040012', 1, 'inbound',  'what do I need to bring on the first day?', 27),
+  ('919990040012', 2, 'outbound', 'One photo ID, and the first instalment paid before the session.', 26),
+  ('919990040012', 3, 'inbound',  'is aadhaar ok', 24),
+  ('919990040012', 4, 'outbound', 'Aadhaar is fine.', 23),
+  ('919990040012', 5, 'inbound',  'and can I pay by card at the centre', 18),
+  ('919990040012', 6, 'outbound', 'Yes — UPI, card or bank transfer, whichever is easiest.', 17),
+  ('919990040012', 7, 'inbound',  'perfect, see you on the 6th', 6),
+  ('919990040012', 8, 'outbound', 'See you then. I have noted you for the weekend batch.', 5)
+) as t(wa_id, seq, dir, body, mins) on t.wa_id = c.customer_wa_id;
+
+-- Taken from the messages rather than written twice. The row above went in with
+-- `now()` for both, which is only ever right for whichever thread happens to be newest;
+-- the 24-hour window runs from the customer's last message, so it is derived here too.
+update conversations c
+set last_message_at = (select max(created_at) from messages where conversation_id = c.id),
+    window_expires_at = (select max(created_at) from messages where conversation_id = c.id)
+                        + interval '24 hours'
+where c.customer_wa_id like '91999004%';
 
 -- ---------------------------------------------------------------------------
 -- What each of those replies cost
@@ -447,6 +665,39 @@ from leads l
 where l.conversation_id = c.id
   and right(c.customer_wa_id, 4)::int % 3 = 1
   and c.last_message_at < now() - interval '1 day';
+
+-- The twelve full threads, by hand, because the whole point of them is that what the
+-- assistant took away is checkable against what was said. These are the rows an owner
+-- exports and works from, so `intent` is the sentence they would have written themselves
+-- — not a category, and never a guess the thread does not support.
+--
+-- ...0010 gets one despite ending badly. A refund argument is still somebody to call, and
+-- a worklist that only holds happy customers is the wrong worklist.
+insert into leads (org_id, conversation_id, name, intent, timeframe, budget, notes, created_at, updated_at)
+select c.org_id, c.id, l.name, l.intent, l.timeframe, l.budget, l.notes,
+       c.last_message_at, c.last_message_at
+from conversations c
+join (values
+  ('919990040001', 'Deepak',  'Data science — weekend batch',        'Batch starting on the 6th', 'Two instalments, by UPI', 'Balked at the full fee; instalments settled it'),
+  ('919990040002', 'Latha',   'Course for her daughter — weekday batch', 'After her daughter decides', null, 'Daughter finished a BSc last year, interviews ongoing. Sitting in on the first session.'),
+  ('919990040003', 'Arjun',   'Digital marketing — asked for a call', 'Today',                null, 'Wants to speak to someone before enrolling'),
+  ('919990040004', 'Nisha',   'Transfer to the next batch',          'Next batch',            null, 'Already enrolled; travelling the week of the 6th'),
+  ('919990040005', 'Farhan',  'Online-only option',                  'Whenever one opens',    null, 'In Mysuru — cannot attend in person'),
+  ('919990040006', 'Shruti',  'Spoken English — morning batch',      'Next batch',            null, 'Travelling from Domlur'),
+  ('919990040007', 'Gopal',   'Placement help',                      'Undecided',             null, 'Asked whether a job is guaranteed. Told no, and stayed.'),
+  ('919990040008', 'Ritu',    'Receipt for the first instalment',    null,   'First instalment paid', 'Receipt went to the wrong email; resent by the office'),
+  ('919990040009', 'Praveen', 'Batch size and attendance',           'Batch starting on the 6th', null, null),
+  ('919990040010', 'Anjali',  'Refund request',                      'Waiting on us',         null, 'Batch already begun. Says she was told something different when she paid.'),
+  ('919990040011', 'Manoj',   'Weekend batch — coming to sit in',    'This Saturday',         null, 'Writes in Hinglish'),
+  ('919990040012', 'Sneha',   'Enrolment documents',                 'Batch starting on the 6th', 'Paying by card at the centre', null)
+) as l(wa_id, name, intent, timeframe, budget, notes) on l.wa_id = c.customer_wa_id;
+
+-- The four that were dealt with, so "To call" starts as a list that is being worked
+-- rather than a list nobody has touched. The three unresolved ones are excluded by hand:
+-- ...0008 is answered, and the rest are old enough to have been picked up this morning.
+update conversations
+set followed_up_at = last_message_at + interval '40 minutes'
+where customer_wa_id in ('919990040004', '919990040006', '919990040008', '919990040009');
 
 -- ---------------------------------------------------------------------------
 -- Runtime controls, in their resting state

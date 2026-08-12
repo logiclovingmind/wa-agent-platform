@@ -20,15 +20,19 @@ const buttonVariants = cva(
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
       },
+      // Every size is thumb-first and shrinks back at `md`. 44px is the smallest target
+      // Apple and Google both consider reliable, and almost every button in this app is
+      // `sm` — at the shadcn default of 32px they were four rows of tap-and-miss on a
+      // phone. A mouse does not need the extra 12px, so the desktop sizes are unchanged.
       size: {
-        default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
-        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
-        icon: "size-9",
-        "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10",
+        default: "h-11 px-5 py-2 has-[>svg]:px-4 md:h-9 md:px-4 md:has-[>svg]:px-3",
+        xs: "h-8 gap-1 rounded-md px-2.5 text-xs has-[>svg]:px-2 md:h-6 md:px-2 md:has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-11 gap-1.5 rounded-md px-4 has-[>svg]:px-3 md:h-8 md:px-3 md:has-[>svg]:px-2.5",
+        lg: "h-12 rounded-md px-6 has-[>svg]:px-4 md:h-10",
+        icon: "size-11 md:size-9",
+        "icon-xs": "size-8 rounded-md md:size-6 [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "size-11 md:size-8",
+        "icon-lg": "size-12 md:size-10",
       },
     },
     defaultVariants: {

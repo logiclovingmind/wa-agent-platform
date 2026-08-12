@@ -184,7 +184,7 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
             key={c.id}
             onClick={() => setOpenId(c.id)}
             className={cn(
-              "block w-full border-b border-border px-4 py-3 text-left text-sm",
+              "block w-full border-b border-border px-4 py-4 text-left text-sm md:py-3",
               c.id === openId && "bg-muted",
             )}
           >

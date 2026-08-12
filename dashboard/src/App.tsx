@@ -97,7 +97,8 @@ export default function App() {
   if (adminOnly) {
     return (
       <div className="flex h-screen flex-col">
-        <nav className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <nav className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+          <img src="/logo.svg" alt="Logic Loving Mind" className="h-6 w-6 shrink-0" />
           <span className="text-sm font-semibold">Platform admin</span>
           <Button
             variant={view === "console" ? "default" : "ghost"}
@@ -128,6 +129,7 @@ export default function App() {
       {/* Wraps rather than scrolls: on a phone the search box takes a line of its own
           below the tabs, which is where a thumb expects it anyway. */}
       <nav className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
+        <img src="/logo.svg" alt="Logic Loving Mind" className="mr-2 h-6 w-6 shrink-0" />
         <Button
           variant={view === "pulse" ? "default" : "ghost"}
           size="sm"
