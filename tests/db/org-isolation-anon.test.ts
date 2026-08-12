@@ -41,18 +41,29 @@ describe("org isolation, anon path", () => {
     }
   });
 
-  // The cost screen reads spend through an aggregate, which is the one place a
-  // function could quietly sum across orgs. It is security invoker precisely so RLS
-  // still applies inside it.
-  it("aggregates only the caller's own spend in usage_daily", async () => {
+  // usage_daily counts what a client did, never what it cost us. It stays security
+  // invoker so RLS applies inside it and one org cannot count another's activity.
+  it("counts only the caller's own events in usage_daily", async () => {
     const rows = await asUser(db, fx.userA, async () =>
-      (await db.query<{ cost_micros: string }>("select cost_micros from public.usage_daily(30)"))
-        .rows,
+      (await db.query<{ events: string }>("select events from public.usage_daily(30)")).rows,
     );
 
-    // One row per IST day, and the seed gives each org exactly one event of 1000.
+    // One row per IST day, and the seed gives each org exactly one event.
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.cost_micros).toBe("1000");
+    expect(rows[0]!.events).toBe("1");
+  });
+
+  // 0019: model spend is our cost of goods, on a screen we hand to the customer we
+  // invoice. Dropping the figure from React would leave it in devtools, so the column
+  // grant is the lock — an owner may count their events and may not price them.
+  it("refuses cost_micros to a logged-in owner", async () => {
+    await expect(
+      asUser(db, fx.userA, () => db.query("select cost_micros from usage_events")),
+    ).rejects.toThrow(/permission denied/i);
+
+    await expect(
+      asUser(db, fx.userA, () => db.query("select public.org_month_spend($1)", [fx.orgA])),
+    ).rejects.toThrow(/permission denied/i);
   });
 
   it("does not let the anon key call usage_daily at all", async () => {

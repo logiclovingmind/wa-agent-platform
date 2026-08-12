@@ -20,6 +20,14 @@
 
 begin;
 
+-- Before the conversations, and not optional. `usage_events` has a composite foreign key
+-- `(conversation_id, org_id)` declared `on delete set null`, and Postgres applies that to
+-- every column in the key — including `org_id`, which is `not null`. Deleting a
+-- conversation that has usage rows therefore does not null the link, it raises
+--   null value in column "org_id" of relation "usage_events" violates not-null constraint
+-- and takes the whole transaction with it. See the note at the bottom of this file.
+delete from usage_events where pricing_category = 'demo_reply';
+
 delete from conversations where customer_wa_id like '9199900%';
 
 insert into conversations
@@ -122,77 +130,70 @@ join (values
 ) as f(wa_id, msg_id, kind) on f.wa_id = c.customer_wa_id
 join messages m on m.conversation_id = c.id and m.wa_message_id = f.msg_id;
 
--- Spend history for the Usage screen. A screen whose only honest state is "₹0.00" is
--- indistinguishable from one that is broken, and the interesting part — a month total, a
--- per-reply average, a shape over 30 days — needs history no live demo can produce.
---
--- Five and a half months of it, not thirty days. The screen only reads 62 (`DAYS` in
--- Usage.tsx) and charts 30, but a client being walked through this is being shown a
--- business that has run on the system since spring, and a database that agrees with
--- that story costs nothing extra to hold — `usage_daily` aggregates in Postgres, so the
--- browser downloads the same sixty-odd rows either way.
---
--- `pricing_category = 'demo_reply'` rather than 'reply' is what makes these removable:
--- deleting the demo conversations leaves usage rows behind (the FK is `on delete set
--- null`, because a deleted conversation must not erase what it cost).
-delete from usage_events where pricing_category = 'demo_reply';
-
-insert into usage_events (org_id, conversation_id, pricing_category, cost_micros, currency, created_at)
-select
-  w.org_id,
-  null,
-  'demo_reply',
-  -- Micro-INR, in the range a real gpt-4o-mini reply lands in: ₹0.002–₹0.005 for a
-  -- prompt of history plus a short answer.
-  2000 + (random() * 3000)::int,
-  'INR',
-  -- IST calendar days, matching how usage_daily buckets them, spread across working
-  -- hours so the timestamps read like traffic rather than a batch job.
-  (((now() at time zone 'Asia/Kolkata')::date - d.day) + interval '9 hours' + random() * interval '11 hours')
-    at time zone 'Asia/Kolkata'
-from (select org_id from wa_accounts order by created_at limit 1) w
-cross join generate_series(0, 164) as d(day)
--- Volume wobbles day to day and thins out on Sundays, so the chart has a shape to read
--- instead of a flat wall. It also grows: a business that started six months ago handled
--- fewer conversations then than it does now, and a flat five months would read as
--- generated data even to someone not looking for it.
-cross join lateral generate_series(
-  1,
-  case when extract(dow from (now() at time zone 'Asia/Kolkata')::date - d.day) = 0
-       then 3
-       else greatest(4, 13 - d.day / 20) + ((d.day * 7) % 9) end
-) as r(n);
-
 -- ---------------------------------------------------------------------------
--- The back catalogue
+-- The back catalogue — one month of ordinary traffic
 -- ---------------------------------------------------------------------------
 --
--- The nine conversations above each exist to show one feature. Nine conversations is
--- also, unmistakably, a demo. These sixteen are the other thing a client needs to see:
--- an inbox that has been running for months, with ordinary finished traffic in it.
--- Nothing here gets clicked during a walkthrough — they are the backdrop the
--- interesting ones sit against.
+-- The nine conversations above each exist to show one feature, in one exchange each: the
+-- message that provokes it and the single reply that is the feature. Nothing is
+-- demonstrated twice, because a second example of a thing already on screen is storage
+-- spent on nothing.
 --
--- Spacing is quadratic, so the list is dense over the last few days and thins into the
--- past, which is the shape a real inbox has. Most of these windows are long shut. That
--- is correct and worth showing: a closed window is the normal state of a conversation
--- nobody has touched since last month.
+-- Nine conversations is also, unmistakably, a demo. These 990 are the other thing a
+-- client needs to see: what the inbox looks like after a month of use — 1,000
+-- conversations in all, about thirty-three a day. Nothing here gets clicked during a
+-- walkthrough; they are the backdrop the interesting ones sit against.
+--
+-- Two messages each, and no more. A backdrop conversation is read from the list, where
+-- only the last line shows, so a third message would cost storage and egress to say
+-- something nobody opens the thread to see. The inbox reads 50 at a time
+-- (`LIST_LIMIT`), so a thousand rows here is a list that scrolls, not a list that gets
+-- downloaded.
+--
+-- The timestamps are the part that matters, because Pulse reads them rather than just
+-- counting rows:
+--
+--   * the hour comes from a weighted list, not `random()`. A uniform spread puts as
+--     many customers at 4am as at 7pm, which flattens the hour grid into noise and
+--     quietly destroys the one number on that screen worth selling — how many people
+--     were answered after closing.
+--   * the gap between question and answer is seconds, not the two flat minutes this
+--     block used to use. "Typical reply time" is a median over these gaps, and two
+--     minutes is what a fast human does, not what this product does.
 insert into conversations
   (org_id, wa_account_id, customer_wa_id, customer_name, handoff_state,
    last_message_at, window_expires_at)
 select w.org_id, w.id,
        '91999002' || lpad(n.i::text, 4, '0'),
-       (array['Deepa Suresh','Arjun Pillai','Fatima Sheikh','Ravi Kumar','Nisha Ghosh',
-              'Karthik Raj','Sneha Patil','Aditya Bose','Lakshmi Nair','Farhan Ali',
-              'Pooja Desai','Manoj Verma'])[1 + (n.i % 12)],
+       -- Nineteen first names against eleven surnames, indexed so they turn at different
+       -- rates. 209 combinations over 991 rows is about five of each, spread far enough
+       -- apart that a page of 50 rarely shows the same name twice.
+       (array['Deepa','Arjun','Fatima','Ravi','Nisha','Karthik','Sneha','Aditya','Lakshmi',
+              'Farhan','Pooja','Manoj','Anil','Divya','Sagar','Tanvi','Vinod','Reshma',
+              'Neha'])[1 + (n.i % 19)]
+       || ' ' ||
+       (array['Suresh','Pillai','Sheikh','Kumar','Ghosh','Raj','Patil','Nair','Desai',
+              'Verma','Hegde'])[1 + ((n.i / 19) % 11)],
        -- 'returned' is what the DO alarm leaves behind after a human goes quiet for
        -- thirty minutes. It should be the commonest non-bot state in an old inbox, and
-       -- nowhere else in this file produces one.
-       (case when n.i = 3 then 'human' when n.i % 5 = 0 then 'returned' else 'bot' end)::handoff_state,
-       now() - (n.i * n.i * interval '5 hours'),
-       now() - (n.i * n.i * interval '5 hours') + interval '23 hours 50 minutes'
+       -- nowhere else in this file produces one. It also decides, below, which
+       -- conversations count as answered by a person rather than by the assistant.
+       (case when n.i = 3 then 'human' when n.i % 7 = 0 then 'returned' else 'bot' end)::handoff_state,
+       t.at, t.at + interval '23 hours 50 minutes'
 from (select org_id, id from wa_accounts order by created_at limit 1) w
-cross join generate_series(1, 16) as n(i);
+cross join generate_series(1, 990) as n(i)
+cross join lateral (
+  select (
+    -- 7 and 30 are coprime, so the days fill evenly instead of clumping.
+    ((now() at time zone 'Asia/Kolkata')::date - ((n.i * 7) % 30))
+    -- Morning enquiries, a lunch dip, an evening peak, and a thin tail past closing.
+    -- The late entries are the ones that make "answered out of hours" a real number.
+    + (((array[7,8,8,9,9,9,10,10,10,11,11,11,12,12,13,13,14,14,15,15,
+               16,16,17,17,18,18,18,19,19,19,20,20,20,21,21,22,22,23,0,1])
+         [1 + ((n.i * 17) % 40)])::text || ' hours')::interval
+    + (((n.i * 23) % 60)::text || ' minutes')::interval
+  ) at time zone 'Asia/Kolkata' as at
+) t;
 
 insert into messages
   (org_id, conversation_id, wa_message_id, direction, body, type, safety_screened, status, created_at)
@@ -200,7 +201,19 @@ select c.org_id, c.id, 'demo-' || c.customer_wa_id || '-' || m.seq, m.dir::messa
        case m.seq when 1 then qa.ask else qa.answer end,
        'text', true,
        case m.seq when 1 then null else 'read' end,
-       c.last_message_at - case m.seq when 1 then interval '2 minutes' else interval '0' end
+       -- The answer lands at `last_message_at`; the question is backdated by however
+       -- long the reply took. Four of those seconds are the debounce window the DO
+       -- waits out before it builds a prompt at all, and the rest is the model.
+       --
+       -- A conversation a person took over is minutes, not seconds, and that is the
+       -- honest number: the assistant is fast, a human is not, and a demo that claims
+       -- eight seconds on a thread a person answered is claiming the wrong thing.
+       c.last_message_at - case
+         when m.seq = 2 then interval '0'
+         when c.handoff_state = 'bot'
+           then ((5 + (right(c.customer_wa_id, 4)::int % 5))::text || ' seconds')::interval
+         else ((8 + (right(c.customer_wa_id, 4)::int % 37))::text || ' minutes')::interval
+       end
 from conversations c
 cross join lateral (
   select
@@ -212,8 +225,24 @@ cross join lateral (
       'My daughter finished her degree last year — is she eligible?',
       'Do you give a certificate at the end?',
       'What time does the Saturday batch start?',
-      'Are the classes online or in person?'
-    ])[1 + (right(c.customer_wa_id, 4)::int % 8)] as ask,
+      'Are the classes online or in person?',
+      'Is the fee refundable if I drop out?',
+      'Do you help with placements?',
+      'Can I move from the weekend batch to weekdays later?',
+      'How many students are there in one batch?',
+      'Do you teach digital marketing as well?',
+      'Do you have an online-only option?',
+      'Can I pay by UPI?',
+      'When does the next batch start?',
+      'Do you have anything early in the morning?',
+      'What do I need to bring to enrol?',
+      'Is attendance compulsory?',
+      'How far is the centre from Domlur?',
+      'My son is in first year BCom — can he join?',
+      'Do you take classes on public holidays?',
+      'What is the fee for Spoken English?',
+      'Can I speak to someone before I decide?'
+    ])[1 + (right(c.customer_wa_id, 4)::int % 24)] as ask,
     (array[
       'Yes — a twelve-week data science track, weekday evenings or weekend mornings. Which would suit you better?',
       'The weekend batch is ₹4,500 for eight sessions, material included. Shall I send you the schedule?',
@@ -222,8 +251,24 @@ cross join lateral (
       'Yes, graduates are eligible for every track. Would you like me to note her details?',
       'Yes, a completion certificate once the final project is submitted and reviewed.',
       'The Saturday batch runs 10am to 1pm. Would you like me to hold a seat?',
-      'Both — you can switch between the in-person class and the live online session in any week.'
-    ])[1 + (right(c.customer_wa_id, 4)::int % 8)] as answer
+      'Both — you can switch between the in-person class and the live online session in any week.',
+      'Once a batch has begun the fee is not refundable, but you can move to the next batch up to the second session.',
+      'We offer CV review and interview practice. We do not promise a job — that would not be honest of us.',
+      'Yes — let us know a week ahead and we will move you to the weekday batch.',
+      'Batches are capped at twenty, so there is time with the trainer for everyone.',
+      'Yes — eight weeks, weekends 2pm to 5pm, ₹12,000.',
+      'Yes, you can take the live online session instead of the class in any week.',
+      'Yes — UPI, card and bank transfer are all fine.',
+      'The next weekend batch begins on the 6th, and four seats are open at the moment.',
+      'Spoken English runs 8am to 9am on weekdays. Data Science is evenings and weekends only.',
+      'One photo ID at the first session, and the first instalment. That is all.',
+      'The certificate needs 80% attendance, so most weeks do matter.',
+      'About ten minutes — we are on 100 Feet Road, above the HDFC branch.',
+      'Yes, students on any degree are welcome. Shall I send the weekend schedule?',
+      'No, and the batch simply runs a week longer when one falls in the middle.',
+      '₹6,000 for six weeks, weekday mornings 8am to 9am.',
+      'Of course — someone from our team can call you. What time suits you?'
+    ])[1 + (right(c.customer_wa_id, 4)::int % 24)] as answer
 ) qa
 cross join (values (1, 'inbound'), (2, 'outbound')) as m(seq, dir)
 where c.customer_wa_id like '91999002%';
@@ -273,6 +318,46 @@ cross join (values
   (24, 'Done — a seat is held for you for the batch starting on the 6th. Someone from our team will confirm by tomorrow.')
 ) as t(seq, body)
 where c.customer_wa_id = '919990030001';
+
+-- ---------------------------------------------------------------------------
+-- What each of those replies cost
+-- ---------------------------------------------------------------------------
+--
+-- Derived from the messages rather than generated beside them, which is a change: this
+-- block used to invent its own thirty days of spend on its own timeline. Two
+-- independent random walks meant the busiest day on the cost chart was not the busiest
+-- day in the inbox, and the "who answered" split could exceed the number of replies
+-- that exist. One row per reply, at the moment of that reply, and every screen agrees
+-- with every other by construction.
+--
+-- `handoff_state = 'bot'` is the test for "the assistant wrote this". A conversation a
+-- person took over cost no model call, and Pulse counts the difference between replies
+-- and usage rows as the work your team did — so an extra row here would quietly claim
+-- credit for a human's answer.
+--
+-- Clients can no longer read `cost_micros` at all (migration 0019), but the all-clients
+-- screen still shows it and it still has to be right.
+--
+-- `pricing_category = 'demo_reply'` rather than 'reply' is what makes these removable:
+-- deleting the demo conversations leaves usage rows behind (the FK is `on delete set
+-- null`, because a deleted conversation must not erase what it cost).
+delete from usage_events where pricing_category = 'demo_reply';
+
+insert into usage_events (org_id, conversation_id, pricing_category, cost_micros, currency, created_at)
+select m.org_id, m.conversation_id, 'demo_reply',
+  -- Micro-INR, priced off `costMicros()`: ₹14 per 1M prompt tokens, ₹57 per 1M
+  -- completion. The system prompt is the whole KB (~1,300 chars) plus the rules block,
+  -- so ~500 tokens before the customer has said anything, and up to ten turns of history
+  -- on top — call it 550–850 in, 60–170 out. That is ₹0.011 to ₹0.022 a reply, and the
+  -- prompt side is most of it, which is why the KB's size is shown in the console.
+  11000 + (random() * 11000)::int,
+  'INR',
+  m.created_at
+from messages m
+join conversations c on c.id = m.conversation_id
+where m.direction = 'outbound'
+  and c.customer_wa_id like '9199900%'
+  and c.handoff_state = 'bot';
 
 -- ---------------------------------------------------------------------------
 -- Runtime controls, in their resting state

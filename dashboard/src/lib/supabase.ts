@@ -41,13 +41,6 @@ export function customerLabel(c: Conversation): string {
   return c.customer_name ?? `+${c.customer_wa_id}`;
 }
 
-/** One IST calendar day of model spend, as returned by the `usage_daily` RPC. */
-export interface DailyUsage {
-  day: string;
-  cost_micros: number;
-  events: number;
-}
-
 /**
  * One client, as the all-clients screen sees it. From the `admin_orgs` RPC — the only
  * read in the dashboard that deliberately crosses orgs. Every other query here is

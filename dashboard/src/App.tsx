@@ -5,16 +5,19 @@ import { Button } from "./components/ui/button";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
-import Usage from "./Usage";
+import Pulse from "./Pulse";
 import Admin from "./Admin";
 import Console from "./Console";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  const [view, setView] = useState<"inbox" | "usage" | "admin" | "console">("inbox");
+  // Pulse, not the inbox. The inbox is where you go when something needs you; landing
+  // there makes an ordinary quiet day look like the product does nothing.
+  const [view, setView] = useState<"inbox" | "pulse" | "admin" | "console">("pulse");
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
+  const [orgId, setOrgId] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [recovering, setRecovering] = useState(false);
 
@@ -39,9 +42,9 @@ export default function App() {
 
   /**
    * Lives here rather than in the inbox because two screens need it now. It decides
-   * what to render and nothing else: usage rows are owner-only under RLS and the
-   * balance endpoint checks admin itself, so a stale answer here hides a control or
-   * shows one that comes back empty — never a way in.
+   * what to render and nothing else: the balance endpoint checks admin itself and the
+   * `pulse_*` functions re-check membership in the database, so a stale answer here
+   * hides a control or shows one that comes back empty — never a way in.
    */
   async function loadRole() {
     const { data: auth } = await supabase.auth.getUser();
@@ -51,10 +54,11 @@ export default function App() {
     // silently downgrade an owner to staff.
     const { data: memberships } = await supabase
       .from("org_members")
-      .select("role")
+      .select("role, org_id")
       .eq("user_id", auth.user.id)
-      .returns<{ role: string }[]>();
+      .returns<{ role: string; org_id: string }[]>();
     setIsOwner((memberships ?? []).some((m) => m.role === "owner"));
+    setOrgId(memberships?.[0]?.org_id ?? "");
     // Belonging to no org is the platform admin's normal state, not a failed read: they
     // are staff of nobody, so there is no inbox that could be shown to them.
     setIsMember((memberships ?? []).length > 0);
@@ -109,23 +113,19 @@ export default function App() {
     <div className="flex h-screen flex-col">
       <nav className="flex items-center gap-1 border-b border-border px-3 py-2">
         <Button
+          variant={view === "pulse" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setView("pulse")}
+        >
+          Pulse
+        </Button>
+        <Button
           variant={view === "inbox" ? "default" : "ghost"}
           size="sm"
           onClick={() => setView("inbox")}
         >
-          Inbox
+          WhatsApp
         </Button>
-        {/* Staff never see cost — the RLS policy says so, so the tab should not imply
-            otherwise by rendering an empty screen. */}
-        {isOwner && (
-          <Button
-            variant={view === "usage" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setView("usage")}
-          >
-            Usage
-          </Button>
-        )}
         {/* Only reachable by an account that is both a platform admin and a member of
             some org, which the split above is meant to make unnecessary. Kept so that
             granting the flag to an existing client owner does not lock them out of it. */}
@@ -158,8 +158,8 @@ export default function App() {
           <Admin />
         ) : view === "console" && isPlatformAdmin ? (
           <Console />
-        ) : view === "usage" && isOwner ? (
-          <Usage />
+        ) : view === "pulse" ? (
+          <Pulse orgId={orgId} />
         ) : (
           <Inbox isOwner={isOwner} />
         )}
