@@ -6,6 +6,7 @@ import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
 import Pulse from "./Pulse";
+import Leads from "./Leads";
 import Admin from "./Admin";
 import Console from "./Console";
 
@@ -14,7 +15,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   // Pulse, not the inbox. The inbox is where you go when something needs you; landing
   // there makes an ordinary quiet day look like the product does nothing.
-  const [view, setView] = useState<"inbox" | "pulse" | "admin" | "console">("pulse");
+  const [view, setView] = useState<"inbox" | "pulse" | "leads" | "admin" | "console">("pulse");
   const [isOwner, setIsOwner] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [orgId, setOrgId] = useState("");
@@ -126,6 +127,13 @@ export default function App() {
         >
           WhatsApp
         </Button>
+        <Button
+          variant={view === "leads" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setView("leads")}
+        >
+          Leads
+        </Button>
         {/* Only reachable by an account that is both a platform admin and a member of
             some org, which the split above is meant to make unnecessary. Kept so that
             granting the flag to an existing client owner does not lock them out of it. */}
@@ -160,6 +168,8 @@ export default function App() {
           <Console />
         ) : view === "pulse" ? (
           <Pulse orgId={orgId} />
+        ) : view === "leads" ? (
+          <Leads />
         ) : (
           <Inbox isOwner={isOwner} />
         )}

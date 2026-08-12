@@ -81,7 +81,14 @@ export function buildSystemPrompt(input: Omit<PromptInput, "history" | "customer
     input.kb.trim(),
     "REFERENCE>>>",
     "",
-    'Respond with JSON only: {"reply": "...", "flags": {"minor": false, "distress": false, "out_of_scope": false}}',
+    // `lead` rides on the completion that was already happening. A second call to
+    // extract it would double the bill and the latency for a field the model has
+    // already read. Empty strings rather than omitted keys is the failure mode to
+    // expect, which is why record_lead() treats "" as "did not say".
+    "",
+    "Also report what the customer has told you about themselves so far, across the whole conversation. Use their words, condensed. Use \"\" for anything they have not said — never guess, and never carry over an example.",
+    "",
+    'Respond with JSON only: {"reply": "...", "flags": {"minor": false, "distress": false, "out_of_scope": false}, "lead": {"name": "", "intent": "", "timeframe": "", "budget": "", "notes": ""}}',
   ]
     .filter((line) => line !== "")
     .join("\n");

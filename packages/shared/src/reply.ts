@@ -1,4 +1,4 @@
-import { complete, type LlmEnv } from "./llm.js";
+import { complete, type Lead, type LlmEnv } from "./llm.js";
 import { buildMessages, type ChatMessage, type PromptTurn } from "./prompt.js";
 import {
   assertSingleReply,
@@ -140,7 +140,20 @@ export type ReplyVerdict =
       usage?: ReplyUsage;
       messages?: ChatMessage[];
     }
-  | { action: "send"; stage: "sent"; text: string; usage: ReplyUsage; messages: ChatMessage[] };
+  | {
+      action: "send";
+      stage: "sent";
+      text: string;
+      usage: ReplyUsage;
+      messages: ChatMessage[];
+      /**
+       * Only on this branch, and deliberately. A flagged turn must not be mined —
+       * safety.md forbids marketing toward one, and recording what a distressed person
+       * wants to buy is the same act. A blocked or errored turn has no trustworthy
+       * extraction to keep either.
+       */
+      lead?: Lead;
+    };
 
 export interface DecideInput {
   /** The debounced burst, already joined. Untrusted. */
@@ -248,5 +261,12 @@ export async function decideReply(env: LlmEnv, input: DecideInput): Promise<Repl
     return { action: "handoff", stage: "sector_check", text: BLOCKED_REPLY, usage, messages };
   }
 
-  return { action: "send", stage: "sent", text: reply, usage, messages };
+  return {
+    action: "send",
+    stage: "sent",
+    text: reply,
+    usage,
+    messages,
+    ...(completion.lead ? { lead: completion.lead } : {}),
+  };
 }

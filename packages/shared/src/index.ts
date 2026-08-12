@@ -34,7 +34,7 @@ export {
 export type { ChatMessage, PromptInput, PromptTurn } from "./prompt.js";
 
 export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, classifyImage, costMicros } from "./llm.js";
-export type { LlmEnv, Completion, ImageClassification } from "./llm.js";
+export type { LlmEnv, Completion, ImageClassification, Lead } from "./llm.js";
 
 export { decideReply, holdFor, HOLD_TEXT } from "./reply.js";
 export type {

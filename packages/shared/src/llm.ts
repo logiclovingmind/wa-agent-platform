@@ -33,11 +33,49 @@ export function costMicros(usage: { promptTokens: number; completionTokens: numb
   );
 }
 
+/**
+ * What the customer has said about themselves, in their own words condensed. Every field
+ * is optional in both directions: the model omits what was never said, and a lead that is
+ * nothing but a phone number is still worth showing — it means somebody asked and nobody
+ * has called them back.
+ */
+export interface Lead {
+  name?: string;
+  intent?: string;
+  timeframe?: string;
+  budget?: string;
+  notes?: string;
+}
+
 export interface Completion {
   reply: string;
   flags: ModelFlags;
+  /** Absent when the model returned no `lead` object, or one with nothing in it. */
+  lead?: Lead;
   /** For usage_events. Snapshotted at send time because prices change. */
   usage: { promptTokens: number; completionTokens: number };
+}
+
+const LEAD_FIELDS = ["name", "intent", "timeframe", "budget", "notes"] as const;
+
+/**
+ * Strings only, trimmed, and capped. The model is repeating untrusted customer text back
+ * to us, so a 40KB "name" is a thing that can happen; nothing downstream needs more than
+ * a line of it. Anything non-string is dropped rather than coerced — `String(object)`
+ * would write "[object Object]" into a column an owner reads.
+ */
+function parseLead(raw: unknown): Lead | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+
+  const lead: Lead = {};
+  for (const field of LEAD_FIELDS) {
+    const value = (raw as Record<string, unknown>)[field];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim().slice(0, 200);
+    if (trimmed) lead[field] = trimmed;
+  }
+
+  return Object.keys(lead).length > 0 ? lead : undefined;
 }
 
 const EMPTY_FLAGS: ModelFlags = { minor: false, distress: false, out_of_scope: false };
@@ -173,14 +211,23 @@ async function once(env: LlmEnv, messages: ChatMessage[]): Promise<Completion> {
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("llm returned no content");
 
-  const parsed = JSON.parse(content) as { reply?: unknown; flags?: Partial<ModelFlags> };
+  const parsed = JSON.parse(content) as {
+    reply?: unknown;
+    flags?: Partial<ModelFlags>;
+    lead?: unknown;
+  };
   if (typeof parsed.reply !== "string") throw new Error("llm returned no reply string");
+
+  const lead = parseLead(parsed.lead);
 
   return {
     reply: parsed.reply,
     // A missing flag is false, not a reason to fail: the regex prefilter has already
     // run and outranks anything the model says here.
     flags: { ...EMPTY_FLAGS, ...parsed.flags },
+    // Omitted entirely rather than empty, so `exactOptionalPropertyTypes` keeps the
+    // "the model said nothing about this customer" case distinct from "it said blank".
+    ...(lead ? { lead } : {}),
     usage: {
       promptTokens: body.usage?.prompt_tokens ?? 0,
       completionTokens: body.usage?.completion_tokens ?? 0,

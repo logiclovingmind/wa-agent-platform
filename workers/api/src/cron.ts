@@ -160,6 +160,12 @@ async function scrubFlaggedContent(env: Env): Promise<void> {
     .in("conversation_id", ids)
     .or("body.not.is.null,media_key.not.is.null");
   if (error) throw new Error(`flagged content scrub failed: ${error.message}`);
+
+  // A lead is payload, not proof. It is written only on turns that were never flagged,
+  // so a flagged conversation may still carry one from earlier — extracted before the
+  // signal appeared, and exactly the sort of profile this scrub exists to remove.
+  const lead = await sb.from("leads").delete().in("conversation_id", ids);
+  if (lead.error) throw new Error(`flagged lead scrub failed: ${lead.error.message}`);
 }
 
 type Sb = ReturnType<typeof createServiceClient>;

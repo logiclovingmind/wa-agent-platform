@@ -63,8 +63,13 @@ describe("scheduled", () => {
     expect(scrub?.body).toEqual({ body: null, media_key: null });
     expect(scrub?.url.searchParams.get("conversation_id")).toContain(flaggedId);
 
-    const del = calls.find((c) => c.method === "DELETE");
-    expect(del?.table).toBe("messages");
+    // A lead is payload, not proof. It is only ever written on a turn that was never
+    // flagged, so a flagged conversation holding one collected it before the signal
+    // appeared — which is precisely the profile this scrub exists to remove.
+    const lead = calls.find((c) => c.method === "DELETE" && c.table === "leads");
+    expect(lead?.url.searchParams.get("conversation_id")).toContain(flaggedId);
+
+    const del = calls.find((c) => c.method === "DELETE" && c.table === "messages");
     expect(del?.url.searchParams.get("created_at")).toMatch(/^lt\.\d{4}-/);
   });
 

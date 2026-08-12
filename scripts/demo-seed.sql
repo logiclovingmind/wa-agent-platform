@@ -358,6 +358,86 @@ where m.direction = 'outbound'
   and c.handoff_state = 'bot';
 
 -- ---------------------------------------------------------------------------
+-- What the assistant learned about each customer
+-- ---------------------------------------------------------------------------
+--
+-- No delete above this: `leads.conversation_id` cascades, so dropping the demo
+-- conversations already took these with them. Unlike a usage event, a lead has nothing
+-- to prove once the thread it came from is gone.
+--
+-- Keyed off the same `% 24` index as the question, so the row in the Leads tab says what
+-- the thread in the inbox says. Most fields are blank on most rows, and that is the
+-- honest shape: these are two-message conversations, and a customer who asked about fees
+-- has not told anyone their budget. A row with nothing but a phone number still earns its
+-- place — it means somebody asked and nobody called them back.
+--
+-- Every fourth conversation gets none at all. Nothing was extracted because nothing was
+-- said, and a demo where the lead count equals the conversation count is selling a
+-- promise the model cannot keep.
+--
+-- Flagged conversations are excluded by the same rule the cron enforces: a lead is only
+-- ever written on a turn that was never flagged, and the retention sweep deletes any
+-- that predate the signal. ...0004 (minor) and ...0009 (distress) must stay absent here,
+-- or the seed contradicts safety.md.
+insert into leads (org_id, conversation_id, intent, timeframe, budget, notes, created_at, updated_at)
+select c.org_id, c.id, l.intent, l.timeframe, l.budget, l.notes,
+       c.last_message_at, c.last_message_at
+from conversations c
+cross join lateral (
+  select
+    (array[
+      'Data science course',      'Weekend batch — fees',   'Centre near Indiranagar',
+      'Instalment payment',       'Course for her daughter', 'Certificate',
+      'Saturday batch timing',    'Online or in person',    'Refund policy',
+      'Placement help',           'Weekday batch later',    'Batch size',
+      'Digital marketing',        'Online-only option',     'UPI payment',
+      'Next batch start date',    'Early morning class',    'Enrolment documents',
+      'Attendance rules',         'Distance from Domlur',   'Course for her son',
+      'Public holiday schedule',  'Spoken English fees',    'Wants a call back'
+    ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as intent,
+    (array[
+      null, null, null, null, 'Next batch', null,
+      'Saturdays', null, null, null, 'Later — after a few weeks', null,
+      null, null, null, 'As soon as one opens', 'Mornings', null,
+      null, null, null, null, null, 'This week'
+    ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as timeframe,
+    -- Almost entirely blank, and it has to be: nobody states a budget in two messages.
+    -- The two that are filled are how someone wants to pay, which is the only money
+    -- anybody volunteers this early.
+    (array[
+      null, null, null, 'Wants to pay in instalments', null, null,
+      null, null, null, null, null, null,
+      null, null, 'Prefers UPI', null, null, null,
+      null, null, null, null, null, null
+    ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as budget,
+    (array[
+      null, null, 'Indiranagar', null, 'Daughter finished her degree last year', null,
+      null, null, null, null, null, null,
+      null, 'Cannot attend in person', null, null, null, null,
+      null, 'Travelling from Domlur', 'Son is in first year BCom', null, null, null
+    ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as notes
+) l
+where c.customer_wa_id like '91999002%'
+  and right(c.customer_wa_id, 4)::int % 4 <> 0;
+
+-- The nine feature conversations, by hand. ...0004 and ...0009 are flagged and get
+-- nothing; the media threads went to a person before anyone said what they wanted.
+-- ...0008 is the erase demo, and it needs a lead precisely so that erasing it can be
+-- seen to take the lead with it — that path deletes leads explicitly, because a flagged
+-- conversation keeps its row and the cascade never fires.
+insert into leads (org_id, conversation_id, name, intent, timeframe, budget, notes, created_at, updated_at)
+select c.org_id, c.id, l.name, l.intent, l.timeframe, l.budget, l.notes,
+       c.last_message_at, c.last_message_at
+from conversations c
+join (values
+  ('919990010001', null,     'Saturday batch — wants a seat held', 'Saturday',  null, 'Asked if seats are still open'),
+  ('919990010002', null,     'Asked to be called back tomorrow',   'Tomorrow',  null, null),
+  ('919990010003', null,     'Wants to speak to a person',         null,        null, null),
+  ('919990010008', 'Sanjay', 'Asked for their details to be deleted', null,     null, null),
+  ('919990030001', 'Harini', 'Data science — weekend batch',       'Batch starting on the 6th', '₹18,000 full course, or ₹4,500 a module', 'Works full time, no coding background. Seat held.')
+) as l(wa_id, name, intent, timeframe, budget, notes) on l.wa_id = c.customer_wa_id;
+
+-- ---------------------------------------------------------------------------
 -- Runtime controls, in their resting state
 -- ---------------------------------------------------------------------------
 --

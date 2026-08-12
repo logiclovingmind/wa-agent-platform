@@ -20,6 +20,7 @@ import {
   windowExpiresAt,
   type Completion,
   type ImageFlags,
+  type Lead,
   type OrgControls,
   type OrgDb,
   type PromptContext,
@@ -169,6 +170,12 @@ export class ConversationDO extends DurableObject<Env> {
 
     const usage = await db.delete("usage_events").eq("conversation_id", conversationId);
     if (usage.error) throw new Error(`usage_events erase failed: ${usage.error.message}`);
+
+    // Explicit, though the conversation delete below would cascade to it: the flagged
+    // branch keeps the conversation row, and that branch is the one where a profile of
+    // the customer is least defensible to keep.
+    const lead = await db.delete("leads").eq("conversation_id", conversationId);
+    if (lead.error) throw new Error(`leads erase failed: ${lead.error.message}`);
 
     if (waIds.length > 0) {
       const dedupe = await db.delete("inbound_dedupe").in("wa_message_id", waIds);
@@ -441,7 +448,10 @@ export class ConversationDO extends DurableObject<Env> {
         // Billed only when the reply actually went out: a replayed burst where the claim
         // is already set sends nothing, and must not bill twice.
         const sent = await this.#send(anchor, verdict.text);
-        if (sent) await this.#recordUsage(verdict.usage);
+        if (sent) {
+          await this.#recordUsage(verdict.usage);
+          if (verdict.lead) await this.#recordLead(verdict.lead);
+        }
         return;
       }
     }
@@ -634,6 +644,22 @@ export class ConversationDO extends DurableObject<Env> {
       cost_micros: costMicros(usage),
     });
     if (error) throw new Error(`usage_events insert failed: ${error.message}`);
+  }
+
+  /**
+   * What the model learned about the customer, merged into one row per conversation.
+   *
+   * Runs after the send, like usage: a lead is worth having and never worth delaying a
+   * reply for. A failure here throws like the others — losing a lead silently is how an
+   * owner comes to trust a list that is missing people.
+   */
+  async #recordLead(lead: Lead): Promise<void> {
+    const orgId = this.#get("org_id");
+    const conversationId = this.#get("conversation_id");
+    if (!orgId || !conversationId) return;
+
+    const { error } = await createOrgDb(this.env, orgId).recordLead(conversationId, lead);
+    if (error) throw new Error(`record_lead failed: ${error.message}`);
   }
 
   async #recordFlag(kind: SafetyKind): Promise<void> {

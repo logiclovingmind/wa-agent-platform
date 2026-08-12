@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { Lead } from "./llm.js";
 
 // Invariant 2: the Worker holds service_role and therefore bypasses RLS. Every
 // query must carry org_id in code. Nothing in the Worker should ever touch a raw
@@ -16,6 +17,7 @@ export const ORG_SCOPED_TABLES = [
   "usage_events",
   "audit_log",
   "safety_flags",
+  "leads",
 ] as const;
 
 export type OrgScopedTable = (typeof ORG_SCOPED_TABLES)[number];
@@ -65,6 +67,24 @@ export class OrgDb {
    */
   monthSpendMicros() {
     return this.sb.rpc("org_month_spend", { p_org_id: this.orgId });
+  }
+
+  /**
+   * Merge what the model learned into this conversation's lead. An accessor for the same
+   * reason as the two above — the org id is half the key, and an upsert through
+   * `insert()` would replace the row rather than merge it, silently erasing a name the
+   * customer gave ten turns ago.
+   */
+  recordLead(conversationId: string, lead: Lead) {
+    return this.sb.rpc("record_lead", {
+      p_org_id: this.orgId,
+      p_conversation_id: conversationId,
+      p_name: lead.name ?? null,
+      p_intent: lead.intent ?? null,
+      p_timeframe: lead.timeframe ?? null,
+      p_budget: lead.budget ?? null,
+      p_notes: lead.notes ?? null,
+    });
   }
 
   insert<T extends Record<string, unknown>>(table: OrgScopedTable, rows: T | T[]) {

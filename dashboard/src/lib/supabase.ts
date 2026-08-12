@@ -132,6 +132,22 @@ export interface OrgUser {
   created_at: string;
 }
 
+/**
+ * What the assistant heard a customer say about themselves, merged across the whole
+ * conversation. Every field is nullable because it is only ever as complete as the
+ * conversation was — a blank means they never said, not that we failed to record it.
+ */
+export interface Lead {
+  id: string;
+  conversation_id: string;
+  name: string | null;
+  intent: string | null;
+  timeframe: string | null;
+  budget: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
 export type SafetyKind = "distress" | "self_harm" | "abuse" | "minor";
 
 export interface SafetyFlag {
