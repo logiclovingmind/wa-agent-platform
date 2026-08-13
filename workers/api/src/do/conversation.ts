@@ -297,15 +297,27 @@ export class ConversationDO extends DurableObject<Env> {
     if (cached) {
       // Only written when Meta actually sent one: a customer who clears their profile
       // name should not blank out the name the owner has been seeing for months.
-      const { error } = await db
+      //
+      // Selected back because this row can be deleted underneath the DO — `demo_reset()`
+      // and a DPDP erase both do it in Postgres, which has no way to tell an object that
+      // still holds the id. An UPDATE matching nothing is not an error, so this used to
+      // hand back a dangling id and the message insert below died on the foreign key,
+      // permanently: every later message from that handset took the same path.
+      const { data, error } = await db
         .update("conversations", {
           window_expires_at: expires,
           last_message_at: lastAt,
           ...(msg.customerName ? { customer_name: msg.customerName } : {}),
         })
-        .eq("id", cached);
+        .eq("id", cached)
+        .select("id")
+        .maybeSingle<{ id: string }>();
       if (error) throw new Error(`conversation update failed: ${error.message}`);
-      return cached;
+      if (data) return cached;
+
+      // Gone. Fall through and let the upsert make a new one — the thread starts empty,
+      // which is what a reset meant, rather than staying broken.
+      this.#del("conversation_id");
     }
 
     const { data, error } = await db

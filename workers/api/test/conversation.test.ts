@@ -104,6 +104,37 @@ describe("handoff", () => {
   });
 });
 
+// The DO caches the conversation id in its own storage and Postgres has no way to tell
+// it when the row goes away. `demo_reset()` deletes it after every walk-in demo, and a
+// PATCH matching nothing is not an error — so the dead id survived, the message insert
+// failed its foreign key, and the handset that ran the demo could never message again.
+describe("a conversation deleted underneath the object", () => {
+  it("re-creates it instead of inserting against the dead id", async () => {
+    const OLD = "33333333-3333-3333-3333-333333333333";
+    const NEW = "44444444-4444-4444-4444-444444444444";
+    let reset = false;
+
+    const calls = stubSupabase((call) => {
+      if (call.table !== "conversations") return [];
+      // PATCH is the cached-id path; POST is the upsert that has to take over from it.
+      if (call.method === "PATCH") return reset ? [] : [{ id: OLD }];
+      return [{ id: reset ? NEW : OLD }];
+    });
+
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName("conv-deleted"));
+    await conv.onInbound(inbound("wamid.d1"));
+
+    reset = true;
+    await conv.onInbound(inbound("wamid.d2"));
+
+    const inserted = calls
+      .filter((c) => c.table === "messages" && c.method === "POST")
+      .map((c) => (c.body as Array<{ conversation_id: string }>)[0]?.conversation_id);
+
+    expect(inserted).toEqual([OLD, NEW]);
+  });
+});
+
 describe("outbound idempotency", () => {
   it("claims a reply exactly once", async () => {
     const conv = stub("claim");
