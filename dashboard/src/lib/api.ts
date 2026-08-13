@@ -84,6 +84,8 @@ export async function platformStats(): Promise<PlatformStats | null> {
  * audited on the Worker side.
  */
 export interface OrgControls {
+  /** Not nullable, unlike everything below it — the column is `not null`. */
+  name: string;
   ai_paused: boolean;
   cap_micros: number | null;
   retention_months: number | null;

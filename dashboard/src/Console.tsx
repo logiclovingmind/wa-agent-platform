@@ -44,6 +44,13 @@ export default function Console() {
     });
   }, []);
 
+  // A rename has to come back through `admin_orgs`, or the dropdown keeps showing the
+  // old name for the rest of the session.
+  async function refreshOrgs() {
+    const { data } = await supabase.rpc("admin_orgs");
+    setOrgs((data ?? []) as AdminOrg[]);
+  }
+
   // A conversation carried across a switch would be answered from the wrong client's KB
   // and read as that client's behaviour.
   function pick(next: string) {
@@ -196,7 +203,12 @@ export default function Console() {
       </div>
 
       <aside className="w-96 shrink-0 overflow-y-auto border-l border-border p-4">
-        <Voice orgId={orgId} run={last} />
+        <Voice
+          orgId={orgId}
+          run={last}
+          name={orgs.find((o) => o.org_id === orgId)?.name ?? ""}
+          onRenamed={() => void refreshOrgs()}
+        />
         <Kb orgId={orgId} />
 
         {last && (
@@ -297,15 +309,27 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * §10's three columns, edited here because this is the only screen where a change to
- * them can be judged: edit the tone, send the same question again, read the difference.
+ * §10's three columns plus the business name, edited here because this is the only
+ * screen where a change to them can be judged: edit the tone, send the same question
+ * again, read the difference.
  *
  * Admin-only by construction — the route behind `setControls` is platform-admin. `voice`
  * is an instruction sitting above the reference block, so a client able to type into it
  * could argue with the safety rules. The sector output check would still refuse the
  * result, but the argument should not be possible in the first place.
  */
-function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
+function Voice({
+  orgId,
+  run,
+  name,
+  onRenamed,
+}: {
+  orgId: string;
+  run: ConsoleRun | null;
+  name: string;
+  onRenamed: () => void;
+}) {
+  const [orgName, setOrgName] = useState(name);
   const [voice, setVoice] = useState("");
   const [words, setWords] = useState("");
   const [languages, setLanguages] = useState("");
@@ -320,6 +344,12 @@ function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
     setSaved(null);
     setFilled(false);
   }, [orgId]);
+
+  // Its own effect, not folded into the reset above: saving refreshes `name`, and a
+  // shared effect would clear the tone textarea every time the name came back.
+  useEffect(() => {
+    setOrgName(name);
+  }, [orgId, name]);
 
   // The console answer is the only reader of these columns the browser has — `admin_orgs`
   // does not return them — so the form fills from the first run and then leaves itself
@@ -337,10 +367,12 @@ function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
     setSaved(null);
     try {
       await setControls(orgId, {
+        name: orgName.trim(),
         voice: voice.trim() || null,
         reply_max_words: words.trim() === "" ? null : Number(words),
         languages: languages.trim() || null,
       });
+      onRenamed();
       setSaved("Saved. Send the same question again to hear the difference.");
     } catch (e) {
       setSaved(e instanceof Error ? e.message : "failed");
@@ -353,9 +385,20 @@ function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
     <div className="space-y-2 text-xs">
       <div className="uppercase tracking-wide text-muted-foreground">Voice</div>
       <p className="text-muted-foreground">
-        Tone, length and language for this client. Empty means the platform default: under
-        60 words, plain, English.
+        The name opens the prompt — the assistant introduces itself as theirs. Tone, length
+        and language left empty mean the platform default: under 60 words, plain, English.
       </p>
+
+      <label className="block space-y-1">
+        <span className="text-muted-foreground">Business name</span>
+        <input
+          value={orgName}
+          onChange={(e) => setOrgName(e.target.value)}
+          maxLength={120}
+          placeholder="Sharma Dental"
+          className="w-full rounded border border-border bg-transparent px-2 py-1"
+        />
+      </label>
 
       <label className="block space-y-1">
         <span className="text-muted-foreground">Tone</span>
@@ -391,11 +434,11 @@ function Voice({ orgId, run }: { orgId: string; run: ConsoleRun | null }) {
 
       <button
         type="button"
-        disabled={busy || !orgId}
+        disabled={busy || !orgId || orgName.trim() === ""}
         onClick={() => void save()}
         className="rounded bg-foreground px-3 py-1.5 font-medium text-background disabled:opacity-50"
       >
-        Save voice
+        Save
       </button>
       {saved && <p className="text-muted-foreground">{saved}</p>}
     </div>

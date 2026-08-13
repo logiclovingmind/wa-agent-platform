@@ -229,6 +229,10 @@ async function templateStatus(env: Env, auth: Record<string, string>, account: W
  * `organizations` from the browser.
  */
 const CONTROLS = {
+  // The one field here with no "back to the default": `organizations.name` is `not null`,
+  // so null and a blank string are both a 400 rather than a 500 out of Postgres.
+  name: (v: unknown) =>
+    typeof v === "string" && v.trim() !== "" && v.trim().length <= 120 ? v.trim() : undefined,
   ai_paused: bool,
   cap_micros: positiveIntOrNull,
   retention_months: (v: unknown) => rangeOrNull(v, 1, 84),
