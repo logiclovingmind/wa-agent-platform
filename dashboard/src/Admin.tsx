@@ -315,6 +315,7 @@ function RowGroup({
             <Detail
               orgId={o.org_id}
               name={o.name}
+              isDemo={o.is_demo}
               db={db}
               meta={meta}
               verdict={verdict}
@@ -334,6 +335,7 @@ function RowGroup({
 function Detail({
   orgId,
   name,
+  isDemo,
   db,
   meta,
   verdict,
@@ -341,6 +343,7 @@ function Detail({
 }: {
   orgId: string;
   name: string;
+  isDemo: boolean;
   db: AdminHealth | undefined;
   meta: NumberHealth[] | undefined;
   verdict: Verdict;
@@ -452,6 +455,8 @@ function Detail({
         <TemplateForm orgId={orgId} numbers={meta} onChanged={onChanged} />
       )}
 
+      {isDemo && <ResetDemo onChanged={onChanged} />}
+
       <OrgUsers orgId={orgId} onChanged={onChanged} />
 
       <Offboard orgId={orgId} name={name} onChanged={onChanged} />
@@ -465,6 +470,80 @@ function Detail({
     </div>
   );
 }
+
+/**
+ * The undo for a walk-in demo, on the demo org's row only.
+ *
+ * A demo overlays a prospect's business on this org — their KB pasted into the console,
+ * their voice, and whatever threads arrive from messaging the sandbox number. Left in
+ * place, the next walk-in is answered with the last prospect's fees.
+ *
+ * The RPC deletes only what the demo added, so the seeded backdrop is never rebuilt and
+ * this is instant rather than a two-minute re-seed. Called straight from the browser
+ * because it is `security definer` guarded on `app.is_platform_admin()`: this account
+ * holds no `org_members` row, so anything scoped by RLS would answer it with nothing.
+ */
+function ResetDemo({ onChanged }: { onChanged: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+
+    const { data, error: rpcError } = await supabase.rpc("demo_reset");
+
+    setBusy(false);
+    setArmed(false);
+    // Surfaced rather than swallowed: a reset that silently did nothing leaves the next
+    // prospect's data on screen, which is the one failure this button exists to prevent.
+    if (rpcError) return setError(rpcError.message);
+
+    const counts = (data as ResetCounts[] | null)?.[0];
+    setDone(
+      counts
+        ? `Removed ${counts.conversations_removed} conversations, ` +
+            `${counts.kb_documents_removed} documents, ${counts.usage_events_removed} usage rows.`
+        : "Nothing to remove — already at defaults.",
+    );
+    onChanged();
+  }
+
+  return (
+    <div className="rounded border border-border bg-background p-4 text-xs">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div className="uppercase tracking-wide text-muted-foreground">After a demo</div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => (armed ? void run() : setArmed(true))}
+          className={`rounded px-3 py-1.5 font-medium disabled:opacity-50 ${
+            armed ? "bg-destructive text-white" : "border border-destructive/50 text-destructive"
+          }`}
+        >
+          {busy ? "Resetting…" : armed ? "Confirm reset" : "Reset demo"}
+        </button>
+      </div>
+
+      <p className="text-muted-foreground">
+        Deletes the knowledge base, conversations and spend from the last walk-in, and puts
+        the name, sector and voice back. The seeded history is not touched.
+      </p>
+
+      {error && <p className="mt-2 text-destructive">{error}</p>}
+      {done && <p className="mt-2 text-emerald-600">{done}</p>}
+    </div>
+  );
+}
+
+type ResetCounts = {
+  conversations_removed: number;
+  kb_documents_removed: number;
+  usage_events_removed: number;
+};
 
 /**
  * The runtime controls of docs/admin-panel.md §3. Every one of them is a row edit and

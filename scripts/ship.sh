@@ -112,6 +112,9 @@ check_anon() {
 check_anon search_everything "{\"p_org_id\":\"$NIL\",\"p_query\":\"anything\"}"
 check_anon admin_orgs '{}'
 check_anon org_month_spend "{\"p_org_id\":\"$NIL\"}"
+# Takes no arguments, so `{}` genuinely resolves it here — unlike the three above, where
+# an empty body would answer "could not find the function" and prove nothing.
+check_anon demo_reset '{}'
 
 if [[ "$FAILED" == true ]]; then
   echo "anon can reach a function it should not. Fix before telling anyone this shipped." >&2

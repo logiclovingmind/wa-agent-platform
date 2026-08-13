@@ -807,13 +807,7 @@ $kb$)
 -- prospect's business and nothing else would ever put them back. `general` is the column
 -- default and the right answer for a coaching institute: a sector is a set of legal
 -- guardrails, not an industry (docs/admin-panel.md §10).
-update organizations
-set name = 'Demo Institute',
-    sector = 'general',
-    voice = 'warm and unhurried; explains before it sells; mirrors the customer''s Hinglish',
-    reply_max_words = 120,
-    languages = 'English, Hindi, Kannada'
-where id = (select org_id from wa_accounts order by created_at limit 1);
+select app.demo_restore_defaults();
 
 commit;
 
