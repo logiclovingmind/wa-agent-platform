@@ -46,11 +46,18 @@ beforeAll(async () => {
   await conv(fx.orgA, wa, SEEDED_WA);
   await conv(fx.orgA, wa, WALK_IN_WA);
 
-  await db.query("insert into kb_documents (org_id, title, raw) values ($1, $2, $3)", [
-    fx.orgA,
+  // What `demo-seed.sql` leaves behind for the restore to replay. Set here rather than
+  // inherited from a seed run, or this test would assert against whatever the last
+  // `pnpm db:seed` happened to write.
+  await db.query("delete from app.demo_kb_seed");
+  await db.query("insert into app.demo_kb_seed (title, raw) values ($1, $2)", [
     "Demo — courses and fees",
     "seeded",
   ]);
+
+  // Deliberately absent from `kb_documents`: every document reaches the prompt on every
+  // turn, so running a demo means deleting the backdrop's own KB first. The walk-in
+  // document below is all that is left by the time the reset runs.
   await db.query("insert into kb_documents (org_id, title, raw) values ($1, $2, $3)", [
     fx.orgA,
     "Sharma Dental — fees",
@@ -151,12 +158,10 @@ describe("demo_reset", () => {
             fx.orgA,
           )
         ).map((r) => r.customer_wa_id),
-        titles: (
-          await list<{ title: string }>(
-            "select title from kb_documents where org_id = $1",
-            fx.orgA,
-          )
-        ).map((r) => r.title),
+        kb: await list<{ title: string; raw: string }>(
+          "select title, raw from kb_documents where org_id = $1 order by title",
+          fx.orgA,
+        ),
         categories: (
           await list<{ pricing_category: string }>(
             "select pricing_category from usage_events where org_id = $1",
@@ -187,8 +192,12 @@ describe("demo_reset", () => {
     expect(after.row.usage_events_removed).toBe("1");
 
     expect(after.conversations).toEqual([SEEDED_WA]);
-    expect(after.titles).toEqual(["Demo — courses and fees"]);
     expect(after.categories).toEqual(["demo_reply"]);
+
+    // The half a delete cannot do: the demo removed the backdrop's KB to keep it out of
+    // the prompt, and the button has to put it back or the next demo starts with a bot
+    // that can only offer to check with the team.
+    expect(after.kb).toEqual([{ title: "Demo — courses and fees", raw: "seeded" }]);
 
     expect(after.org.name).toBe("Demo Institute");
     expect(after.org.sector).toBe("general");

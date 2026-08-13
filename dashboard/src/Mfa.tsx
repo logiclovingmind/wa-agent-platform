@@ -254,11 +254,14 @@ export function MfaSetup() {
         <form onSubmit={confirm} className="space-y-4 rounded-md border border-border p-4">
           <p className="text-sm">Scan this in Google Authenticator, 1Password, or Aegis.</p>
           {/* GoTrue hands back the SVG itself, so the QR is never generated here and no
-              image library is needed. Percent-encoded rather than inlined raw: the markup
-              carries `#` in its fill colours, and a `#` ends a data URI early — the image
-              then loads as far as the first colour and renders broken. */}
+              image library is needed. Used raw because `enroll()` in auth-js has already
+              prepended `data:image/svg+xml;utf-8,` — encoding it here once more, which is
+              what this line used to do, percent-encoded that whole URI into the body of a
+              second one and rendered a broken image. Nothing needs escaping: goqrsvg
+              writes `fill:black`, so the only character that would end a data URI early —
+              a `#` in a hex colour — never appears. */}
           <img
-            src={`data:image/svg+xml,${encodeURIComponent(pending.qr)}`}
+            src={pending.qr}
             alt=""
             className="h-44 w-44 bg-white"
           />

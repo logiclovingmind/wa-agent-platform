@@ -758,18 +758,17 @@ where id = (select org_id from wa_accounts order by created_at limit 1);
 --
 -- Reference data, never instructions: `buildSystemPrompt()` wraps it in delimiters, and
 -- the sector output check runs on the finished reply regardless of what is in here.
--- Every document, not just the two below. A KB pasted into the console for a walk-in
--- carries that prospect's titles, so a `title like 'Demo — %'` filter left it behind and
--- the next demo answered with the last prospect's fees. Same two locks as the deletes at
--- the top of the file.
-delete from kb_documents
-where org_id = (select org_id from wa_accounts order by created_at limit 1)
-  and org_id in (select id from organizations where is_demo);
+--
+-- Written to `app.demo_kb_seed` rather than straight into `kb_documents`: the restore at
+-- the foot of this file is what puts them in the demo org, and it is also what the Reset
+-- demo button calls. A demo has to delete these two — everything in the KB reaches the
+-- prompt on every turn, so a dental prospect's bot would otherwise quote course fees —
+-- and going through the snapshot is what lets the button put them back.
+delete from app.demo_kb_seed;
 
-insert into kb_documents (org_id, title, raw)
-select w.org_id, d.title, d.raw
-from (select org_id from wa_accounts order by created_at limit 1) w
-cross join (values
+insert into app.demo_kb_seed (title, raw)
+select d.title, d.raw
+from (values
   ('Demo — courses and fees', $kb$
 Data Science, 12 weeks. Weekend batch: Saturday and Sunday, 10am to 1pm. Weekday batch:
 Monday to Thursday, 7pm to 9pm. Fees ₹18,000 for the full course, or ₹4,500 per module
@@ -802,6 +801,9 @@ $kb$)
 -- §10's voice, on the one org that has a KB to talk about. Left null everywhere else on
 -- purpose: null has to reproduce the old prompt byte for byte, and this is the place to
 -- watch a tone sentence change the answer without a line of code changing.
+--
+-- This call is also what writes the two documents above into `kb_documents`, so it has to
+-- stay after the snapshot and not before it.
 --
 -- `name` and `sector` are restored here too, because a walk-in demo edits both to the
 -- prospect's business and nothing else would ever put them back. `general` is the column
