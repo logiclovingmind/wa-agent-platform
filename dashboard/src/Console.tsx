@@ -11,6 +11,7 @@ import {
   type ConsoleTurn,
   type KbDocument,
   type KbList,
+  type OrgControls,
 } from "./lib/api";
 import { inr } from "./lib/utils";
 
@@ -115,12 +116,15 @@ export default function Console() {
             <span className="text-xs text-muted-foreground">
               {inr(spent)} this session
             </span>
+            {/* Not "Reset": the button that undoes a demo lives in All clients and is
+                called Reset demo. Two buttons with one name had an operator clear the
+                transcript and believe the prospect's name and KB had been rolled back. */}
             <button
               type="button"
               onClick={reset}
               className="rounded border border-border px-3 py-1 text-xs"
             >
-              Reset
+              Clear chat
             </button>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -353,7 +357,8 @@ function Voice({
 
   // The console answer is the only reader of these columns the browser has — `admin_orgs`
   // does not return them — so the form fills from the first run and then leaves itself
-  // alone, or a later run would overwrite what is being typed.
+  // alone, or a later run would overwrite what is being typed. `filled` is also what
+  // `save()` reads to tell "empty because unknown" from "empty on purpose".
   useEffect(() => {
     if (!run || filled) return;
     setVoice(run.voice ?? "");
@@ -366,12 +371,17 @@ function Voice({
     setBusy(true);
     setSaved(null);
     try {
-      await setControls(orgId, {
-        name: orgName.trim(),
-        voice: voice.trim() || null,
-        reply_max_words: words.trim() === "" ? null : Number(words),
-        languages: languages.trim() || null,
-      });
+      // Only the fields this panel has actually shown. `name` arrives with the org list,
+      // the other three only after a console run — so before a run they are empty because
+      // they are unknown, not because they are blank, and sending them would null a saved
+      // tone the operator never saw. The route leaves out fields alone.
+      const patch: Partial<OrgControls> = { name: orgName.trim() };
+      if (filled) {
+        patch.voice = voice.trim() || null;
+        patch.reply_max_words = words.trim() === "" ? null : Number(words);
+        patch.languages = languages.trim() || null;
+      }
+      await setControls(orgId, patch);
       onRenamed();
       setSaved("Saved. Send the same question again to hear the difference.");
     } catch (e) {
@@ -404,7 +414,10 @@ function Voice({
         <span className="text-muted-foreground">Tone</span>
         <textarea
           value={voice}
-          onChange={(e) => setVoice(e.target.value)}
+          onChange={(e) => {
+            setVoice(e.target.value);
+            setFilled(true);
+          }}
           rows={3}
           placeholder="warm and unhurried, explains before it sells"
           className="w-full rounded border border-border bg-transparent px-2 py-1"
@@ -415,7 +428,10 @@ function Voice({
         <span className="text-muted-foreground">Reply length (words)</span>
         <input
           value={words}
-          onChange={(e) => setWords(e.target.value)}
+          onChange={(e) => {
+            setWords(e.target.value);
+            setFilled(true);
+          }}
           inputMode="numeric"
           placeholder="60 — platform default"
           className="w-full rounded border border-border bg-transparent px-2 py-1"
@@ -426,7 +442,10 @@ function Voice({
         <span className="text-muted-foreground">Languages</span>
         <input
           value={languages}
-          onChange={(e) => setLanguages(e.target.value)}
+          onChange={(e) => {
+            setLanguages(e.target.value);
+            setFilled(true);
+          }}
           placeholder="English"
           className="w-full rounded border border-border bg-transparent px-2 py-1"
         />

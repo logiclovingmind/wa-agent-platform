@@ -127,6 +127,7 @@ on demand by name.
 | `docs/free-tier.md` | Limits, cron budget, degradation, monitoring |
 | `docs/backups.md` | The backup job — the original plan is impossible |
 | `docs/rotation.md` | Rotating the master key, DB password or service_role key |
+| `docs/demo.md` | Running a walk-in demo — prep, the reset button, do and don't |
 
 ---
 
