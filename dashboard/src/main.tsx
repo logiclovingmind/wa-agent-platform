@@ -1,11 +1,16 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
 import "./index.css";
 
+// The per-pane boundaries inside App cover the screens. This one is the backstop for
+// the shell itself — the nav, the sign-in form and the MFA challenge sit above them.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary label="The dashboard">
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
 

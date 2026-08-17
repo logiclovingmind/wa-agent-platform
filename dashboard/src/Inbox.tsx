@@ -45,6 +45,7 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
   const [filter, setFilter] = useState<Filter>("all");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<{ bad: boolean; text: string } | null>(null);
 
   useNow();
 
@@ -147,7 +148,15 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
 
   async function exportCsv() {
     setExporting(true);
-    setLoadError(await downloadLeadsCsv());
+    setExportNote(null);
+    const result = await downloadLeadsCsv();
+    setExportNote(
+      result.ok
+        ? result.rows === 0
+          ? { bad: false, text: "Nothing to export yet — the assistant has not recorded any enquiries." }
+          : { bad: false, text: `Saved ${result.rows} ${result.rows === 1 ? "enquiry" : "enquiries"}.` }
+        : { bad: true, text: `Export failed: ${result.error}` },
+    );
     setExporting(false);
   }
 
@@ -164,8 +173,10 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <span className="text-sm font-semibold">Conversations</span>
+          {/* "Export" alone reads as "export this list of conversations", which is not
+              what the file contains. It is the enquiries the assistant captured. */}
           <Button variant="ghost" size="sm" disabled={exporting} onClick={() => void exportCsv()}>
-            Export
+            {exporting ? "Exporting…" : "Export enquiries"}
           </Button>
         </header>
 
@@ -184,6 +195,19 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
         {loadError && (
           <p className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
             Could not load conversations: {loadError}
+          </p>
+        )}
+
+        {exportNote && (
+          <p
+            className={cn(
+              "border-b px-4 py-3 text-xs",
+              exportNote.bad
+                ? "border-destructive/40 bg-destructive/10 text-destructive"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {exportNote.text}
           </p>
         )}
 

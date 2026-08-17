@@ -106,6 +106,66 @@ async function post(body: string, signature: string | null, slug = "acme"): Prom
 
 afterEach(() => vi.unstubAllGlobals());
 
+/**
+ * Counts lookups and lets the first `failures` of them answer with a gateway error.
+ * The fake in fake-supabase.ts always returns 200, and the whole point here is what
+ * happens when Postgres does not.
+ */
+function flakyLookup(row: Record<string, unknown> | null, failures: number): () => number {
+  let lookups = 0;
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = new Request(input as RequestInfo, init);
+    if (!new URL(req.url).pathname.startsWith("/rest/v1/wa_accounts")) {
+      throw new Error(`unexpected fetch: ${req.url}`);
+    }
+    lookups++;
+    if (lookups <= failures) return new Response("gateway timeout", { status: 522 });
+    return Response.json(row);
+  });
+  return () => lookups;
+}
+
+describe("slug lookup", () => {
+  // A throw here is a non-2xx to Meta, and Meta answers that by backing the client
+  // off for minutes — so one transient failure must not cost a delivery.
+  it("retries once and serves the request", async () => {
+    const lookups = flakyLookup(await account(), 1);
+    const res = await worker.fetch(
+      new Request(
+        "https://api.test/webhook/acme?hub.mode=subscribe&hub.verify_token=test-verify-token&hub.challenge=42",
+      ),
+      env,
+      createExecutionContext(),
+    );
+    expect(await res.text()).toBe("42");
+    expect(lookups()).toBe(2);
+  });
+
+  it("gives up after the second failure rather than retrying forever", async () => {
+    const lookups = flakyLookup(await account(), 2);
+    const res = await worker.fetch(
+      new Request("https://api.test/webhook/acme?hub.mode=subscribe&hub.challenge=42"),
+      env,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(500);
+    expect(lookups()).toBe(2);
+  });
+
+  // An empty result is an answer, not a failure: retrying it would double the cost of
+  // every scan for a slug that does not exist.
+  it("does not retry a slug that matches nothing", async () => {
+    const lookups = flakyLookup(null, 0);
+    const res = await worker.fetch(
+      new Request("https://api.test/webhook/nope?hub.mode=subscribe&hub.challenge=42"),
+      env,
+      createExecutionContext(),
+    );
+    expect(res.status).toBe(404);
+    expect(lookups()).toBe(1);
+  });
+});
+
 describe("GET /webhook/:slug", () => {
   it("echoes the challenge for the right token", async () => {
     stub(await account());

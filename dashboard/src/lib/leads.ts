@@ -60,16 +60,29 @@ export async function leadsFor(conversationIds: string[]): Promise<Map<string, L
   return new Map((data ?? []).map((l) => [l.conversation_id, l]));
 }
 
-export async function downloadLeadsCsv(): Promise<string | null> {
+/**
+ * `rows: 0` is a real answer and not a failure — the same distinction the inbox draws
+ * between a read that broke and an inbox that is genuinely empty. Collapsing the two
+ * into "null means fine" is what let a failed export hand the owner a file.
+ */
+export type ExportOutcome = { ok: true; rows: number } | { ok: false; error: string };
+
+export async function downloadLeadsCsv(): Promise<ExportOutcome> {
   const all: LeadRow[] = [];
   for (let from = 0; from < MAX; from += CHUNK) {
     const chunk = await page(from, CHUNK);
-    if (chunk.error) return chunk.error;
+    if (chunk.error) return { ok: false, error: chunk.error };
     all.push(...chunk.rows);
     if (chunk.rows.length < CHUNK) break;
   }
-  save(toCsv(all), `leads-${new Date().toISOString().slice(0, 10)}.csv`);
-  return null;
+
+  // No download on an empty export. A file containing nothing but the header looks like
+  // a successful export of a client who has no customers, and an owner who opens it
+  // concludes the assistant has not been capturing anything.
+  if (all.length > 0) {
+    save(toCsv(all), `leads-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+  return { ok: true, rows: all.length };
 }
 
 const COLUMNS: Array<[string, (row: LeadRow) => string | null | undefined]> = [

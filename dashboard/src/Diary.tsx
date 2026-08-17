@@ -43,6 +43,12 @@ export interface Booking {
   conversation_id: string | null;
 }
 
+/** One bookable slot on the open day, as `public.day_slots` returns it. */
+interface Slot {
+  starts_at: string;
+  slot_minutes: number;
+}
+
 /**
  * Midnight IST on a `YYYY-MM-DD`, as an instant.
  *
@@ -86,7 +92,9 @@ const COLUMNS = [
 const columnOf = (day: string) => (dayOfWeek(day) + 6) % 7;
 
 function who(b: Booking): string {
-  if (b.kind === "block") return "Blocked out";
+  // `service` carries the note on a block — the column already exists and a block has no
+  // service, so the alternative was a column that only one `kind` would ever use.
+  if (b.kind === "block") return b.service ? `Blocked out · ${b.service}` : "Blocked out";
   return [b.customer_name, b.service].filter(Boolean).join(" · ") || "No name given";
 }
 
@@ -96,8 +104,13 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hours, setHours] = useState<HoursRow[] | null>(null);
+  const [slots, setSlots] = useState<Slot[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** The open day. Declared here rather than beside the render, because the effects and
+      the write helpers below all key off it. */
+  const day = selected ?? today;
 
   useEffect(() => {
     if (!orgId) return;
@@ -115,6 +128,25 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     if (!orgId) return;
     void loadHours();
   }, [orgId]);
+
+  /**
+   * The bookable slots on the open day, asked of Postgres rather than derived from `hours`
+   * here. Which instants are slots is one rule with three readers (see `app.slot_grid`),
+   * and a fourth copy of it in the browser is how the assistant ends up offering a time
+   * this form thinks is gone.
+   *
+   * Re-runs when `bookings` changes, so taking a slot removes it from the list underneath.
+   */
+  useEffect(() => {
+    if (!orgId || bookings === null) return;
+    let live = true;
+    void supabase
+      .rpc("day_slots", { p_org_id: orgId, p_day: day })
+      .then(({ data }) => live && setSlots((data as Slot[] | null) ?? []));
+    return () => {
+      live = false;
+    };
+  }, [orgId, day, bookings]);
 
   async function loadMonth(live: () => boolean = () => true) {
     const from = `${month}-01`;
@@ -165,6 +197,72 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     await loadMonth();
   }
 
+  /**
+   * Deleted rather than cancelled, which is the one place this screen departs from the
+   * rule above. A cancelled row is kept because it proves a customer was once promised
+   * that time; a block was promised to nobody, so keeping it would only leave rows that
+   * every reader has to filter out for the rest of the org's life.
+   */
+  async function unblock(ids: string[]) {
+    setBusy(true);
+    const { error: writeError } = await supabase
+      .from("appointments")
+      .delete()
+      .in("id", ids)
+      .eq("kind", "block");
+    setBusy(false);
+    if (writeError) return setError(writeError.message);
+    await loadMonth();
+  }
+
+  /**
+   * A booking for someone the assistant never spoke to — a walk-in, a phone call, or a
+   * conversation that was handed to a person before it got as far as a time.
+   *
+   * Returns false when the slot went in the seconds between the list being drawn and the
+   * button being pressed, which the form reports rather than swallowing: the alternative is
+   * a staff member believing they booked somebody who is not in the diary.
+   */
+  async function bookManual(startsAt: string, name: string, service: string): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    const { data, error: writeError } = await supabase.rpc("book_manual", {
+      p_org_id: orgId,
+      p_starts_at: startsAt,
+      p_name: name.trim() || null,
+      p_service: service.trim() || null,
+    });
+    setBusy(false);
+    if (writeError) {
+      setError(writeError.message);
+      return false;
+    }
+    await loadMonth();
+    // Null is the "could not" answer, and it is not an error — the row already exists.
+    return data !== null;
+  }
+
+  /** Returns how many slots were actually taken out, which is not always what was asked. */
+  async function blockOut(from: string, to: string, note: string): Promise<number> {
+    setBusy(true);
+    setError(null);
+    const { data, error: writeError } = await supabase.rpc("block_time", {
+      p_org_id: orgId,
+      // The offset is in the string for the same reason as `istMidnight`: no arithmetic
+      // happens on either side, so neither side can be wrong about it.
+      p_from: `${day}T${from}:00+05:30`,
+      p_to: `${day}T${to}:00+05:30`,
+      p_note: note.trim() || null,
+    });
+    setBusy(false);
+    if (writeError) {
+      setError(writeError.message);
+      return 0;
+    }
+    await loadMonth();
+    return typeof data === "number" ? data : 0;
+  }
+
   async function saveHours(next: HoursRow[]) {
     setBusy(true);
     setError(null);
@@ -201,8 +299,8 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const cells = Array.from({ length: 42 }, (_, i) => shiftDay(first, i - lead));
   const weeks = Array.from({ length: 6 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
 
-  const day = selected ?? today;
   const onDay = byDay.get(day) ?? [];
+  const blocksOnDay = onDay.filter((b) => b.kind === "block");
   const openDays = new Set((hours ?? []).map((h) => h.weekday));
 
   return (
@@ -318,7 +416,12 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           ) : (
             <ul className="space-y-2">
               {onDay.map((b) => (
-                <li key={b.id} className="rounded border border-border p-2 text-xs">
+                <li
+                  key={b.id}
+                  className={`rounded border p-2 text-xs ${
+                    b.kind === "block" ? "border-dashed border-border bg-muted/40" : "border-border"
+                  }`}
+                >
                   <div className="flex items-center gap-2">
                     <span className="font-medium tabular-nums">{istTime(b.starts_at)}</span>
                     <span className="text-muted-foreground">{b.duration_minutes} min</span>
@@ -326,10 +429,10 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void cancel(b.id)}
+                      onClick={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
                       className="text-destructive disabled:opacity-50"
                     >
-                      Cancel
+                      {b.kind === "block" ? "Unblock" : "Cancel"}
                     </button>
                   </div>
                   <div className="mt-0.5 truncate">{who(b)}</div>
@@ -337,6 +440,32 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
               ))}
             </ul>
           )}
+
+          {/* One click for the common case. Blocking an afternoon makes eight rows, and
+              clearing them one at a time is eight confirmations of the same decision. */}
+          {blocksOnDay.length > 1 && (
+            <button
+              type="button"
+              disabled={busy}
+              className="mt-2 text-xs text-destructive disabled:opacity-50"
+              onClick={() => void unblock(blocksOnDay.map((b) => b.id))}
+            >
+              Unblock all {blocksOnDay.length} on this day
+            </button>
+          )}
+
+          <div className="mt-4 border-t border-border pt-3">
+            <BookingForm key={`book-${day}`} slots={slots} busy={busy} onBook={bookManual} />
+          </div>
+
+          <div className="mt-4 border-t border-border pt-3">
+            <BlockEditor
+              key={day}
+              hours={hours?.find((h) => h.weekday === dayOfWeek(day)) ?? null}
+              busy={busy}
+              onBlock={blockOut}
+            />
+          </div>
 
           <div className="mt-4 border-t border-border pt-3">
             <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
@@ -354,6 +483,234 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           </div>
           <HoursEditor hours={hours} busy={busy} onSave={saveHours} />
         </section>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Entering a booking the assistant did not take.
+ *
+ * The times come from a list rather than a text box on purpose. `free_slots` decides
+ * whether a time is available by comparing `starts_at` for equality, so a 09:15 booking
+ * typed by hand would leave 09:00 and 09:30 both bookable and the assistant would put a
+ * customer on top of the walk-in. `book_manual` refuses anything off the grid regardless —
+ * this list is so that nobody has to find that out by being refused.
+ */
+function BookingForm({
+  slots,
+  busy,
+  onBook,
+}: {
+  /** Null while loading. Empty means the day is full, or closed. */
+  slots: Slot[] | null;
+  busy: boolean;
+  onBook: (startsAt: string, name: string, service: string) => Promise<boolean>;
+}) {
+  const [at, setAt] = useState("");
+  const [name, setName] = useState("");
+  const [service, setService] = useState("");
+  const [lost, setLost] = useState(false);
+
+  const chosen = at || slots?.[0]?.starts_at || "";
+
+  if (slots === null) return <p className="text-xs text-muted-foreground">Loading…</p>;
+
+  async function submit() {
+    const ok = await onBook(chosen, name, service);
+    setLost(!ok);
+    if (ok) {
+      setName("");
+      setService("");
+      setAt("");
+    }
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="uppercase tracking-wide text-muted-foreground">Add a booking</div>
+
+      {slots.length === 0 ? (
+        <p className="text-muted-foreground">
+          No free times on this day — everything is booked, blocked, or you are closed.
+        </p>
+      ) : (
+        <>
+          <div className="flex items-center gap-1.5">
+            <select
+              value={chosen}
+              onChange={(e) => {
+                setAt(e.target.value);
+                setLost(false);
+              }}
+              className="rounded border border-border bg-transparent px-1 py-0.5"
+            >
+              {slots.map((s) => (
+                <option key={s.starts_at} value={s.starts_at}>
+                  {istTime(s.starts_at)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Name"
+              className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <input
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              placeholder="What for (optional)"
+              className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void submit()}
+              className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
+            >
+              Book
+            </button>
+          </div>
+
+          {lost ? (
+            // Said plainly rather than as an error: nothing went wrong, somebody was just
+            // quicker, and the staff member has to know not to expect this person.
+            <p className="text-destructive">
+              That time went while you were typing. Nothing was booked — pick another.
+            </p>
+          ) : (
+            <p className="text-muted-foreground">
+              For someone who phoned or was handed over. The assistant stops offering the
+              time immediately.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Marking a stretch of a day unavailable.
+ *
+ * Not owner-gated, unlike the opening hours below it. Hours are a standing fact about the
+ * business; "the doctor left at three" is the same class of thing as marking a booking,
+ * which `appointments`' own policy already lets any member do. Gating it here would only
+ * mean the person answering the phone has to find the owner before they can stop the
+ * assistant promising a slot that no longer exists.
+ */
+function BlockEditor({
+  hours,
+  busy,
+  onBlock,
+}: {
+  /** This weekday's opening hours, or null when the business is closed that day. */
+  hours: HoursRow | null;
+  busy: boolean;
+  onBlock: (from: string, to: string, note: string) => Promise<number>;
+}) {
+  const open = hours?.opens_at.slice(0, 5) ?? "09:00";
+  const close = hours?.closes_at.slice(0, 5) ?? "18:00";
+  const [from, setFrom] = useState(open);
+  const [to, setTo] = useState(close);
+  const [note, setNote] = useState("");
+  const [result, setResult] = useState<number | null>(null);
+
+  if (!hours) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        You are closed on this day, so the assistant already offers no times. Nothing to
+        block.
+      </p>
+    );
+  }
+
+  const backwards = to <= from;
+
+  async function submit() {
+    const n = await onBlock(from, to, note);
+    setResult(n);
+    setNote("");
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="uppercase tracking-wide text-muted-foreground">Block out time</div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          type="time"
+          value={from}
+          onChange={(e) => {
+            setFrom(e.target.value);
+            setResult(null);
+          }}
+          className="rounded border border-border bg-transparent px-1 py-0.5"
+        />
+        <span className="text-muted-foreground">–</span>
+        <input
+          type="time"
+          value={to}
+          onChange={(e) => {
+            setTo(e.target.value);
+            setResult(null);
+          }}
+          className={`rounded border bg-transparent px-1 py-0.5 ${
+            backwards ? "border-destructive" : "border-border"
+          }`}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setFrom(open);
+            setTo(close);
+            setResult(null);
+          }}
+          className="rounded border border-border px-2 py-0.5"
+        >
+          Whole day
+        </button>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Reason (optional)"
+          className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
+        />
+        <button
+          type="button"
+          disabled={busy || backwards}
+          onClick={() => void submit()}
+          className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
+        >
+          Block
+        </button>
+      </div>
+
+      {backwards ? (
+        <p className="text-destructive">The end has to be after the start.</p>
+      ) : result === null ? (
+        <p className="text-muted-foreground">
+          The assistant stops offering these times and cannot book them.
+        </p>
+      ) : result === 0 ? (
+        // Genuinely different from a failure, and the owner has to be able to tell: the
+        // usual cause is every slot in the range already being taken.
+        <p className="text-muted-foreground">
+          Nothing was blocked — those times were already taken or outside your hours.
+          Existing bookings are never removed by this.
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          Blocked {result} slot{result === 1 ? "" : "s"}. Any booking already in that range
+          was left alone — cancel those yourself if you need to.
+        </p>
       )}
     </div>
   );

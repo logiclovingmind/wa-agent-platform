@@ -30,8 +30,8 @@ function merge(a: Message[], b: Message[]): Message[] {
 }
 
 /** Saves without a server round trip: the Worker already returned the whole export. */
-function downloadJson(filename: string, data: unknown): void {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+function downloadJson(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -66,6 +66,9 @@ export default function Thread({
   const [confirmErase, setConfirmErase] = useState(false);
   // Erasure rewrites the thread underneath us, and Realtime does not deliver deletes.
   const [reloadKey, setReloadKey] = useState(0);
+  // Held as the pretty-printed text the file would contain, so what is read on screen
+  // and what lands on disk cannot drift apart.
+  const [exported, setExported] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   useNow();
@@ -80,8 +83,12 @@ export default function Thread({
   // The parent caught up, or a different conversation opened. Either way stop guessing.
   useEffect(() => setOptimistic(null), [conversation.handoff_state, id]);
 
-  // An armed confirm must not survive switching customers.
-  useEffect(() => setConfirmErase(false), [id]);
+  // An armed confirm must not survive switching customers, and neither must one
+  // customer's export stay on screen above another customer's thread.
+  useEffect(() => {
+    setConfirmErase(false);
+    setExported(null);
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,8 +265,10 @@ export default function Thread({
                   disabled={busy}
                   onClick={() =>
                     act(async () => {
-                      const data = await exportConversation(id);
-                      downloadJson(`conversation-${conversation.customer_wa_id}.json`, data);
+                      // Shown rather than saved. This is the answer to a data-access
+                      // request, and an owner is about to hand it to the customer who
+                      // asked — being able to read it first is the point.
+                      setExported(JSON.stringify(await exportConversation(id), null, 2));
                     })
                   }
                 >
@@ -291,6 +300,33 @@ export default function Thread({
           )}
         </div>
       </header>
+
+      {exported !== null && (
+        <div className="border-b border-border bg-muted/40 px-4 py-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="mr-auto text-xs uppercase tracking-wide text-muted-foreground">
+              Everything held about this customer
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                downloadJson(`conversation-${conversation.customer_wa_id}.json`, exported)
+              }
+            >
+              Download
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setExported(null)}>
+              Close
+            </Button>
+          </div>
+          {/* Attachments are keys, not bytes, so this stays small enough to read and the
+              export cannot pull the egress budget through the Worker. */}
+          <pre className="max-h-72 overflow-auto rounded border border-border bg-background p-3 text-[11px] leading-relaxed">
+            {exported}
+          </pre>
+        </div>
+      )}
 
       {confirmErase && (
         <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs">

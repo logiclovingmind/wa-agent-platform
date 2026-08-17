@@ -32,8 +32,11 @@ export default function Search({
   onOpen: (conversationId: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
+  const [closed, setClosed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
@@ -51,9 +54,14 @@ export default function Search({
     setBusy(true);
     const timer = setTimeout(() => {
       void (async () => {
+        // The dates go to Postgres rather than filtering `hits` here, because each arm
+        // of the RPC is limited to its ten most recent matches — narrowing afterwards
+        // would search the last ten rows rather than the chosen month.
         const { data, error: err } = await supabase.rpc("search_everything", {
           p_org_id: orgId,
           p_query: q,
+          p_from: from || null,
+          p_to: to || null,
         });
         if (stale) return;
         setError(err ? err.message : null);
@@ -66,35 +74,87 @@ export default function Search({
       stale = true;
       clearTimeout(timer);
     };
-  }, [query, orgId]);
+  }, [query, orgId, from, to]);
 
   // Clicking anywhere else closes the results. Without this the panel sits over the
-  // thread the user just opened from it.
+  // thread the user just opened from it. It is its own flag rather than emptying `hits`,
+  // because the panel now stays open on an empty result and clearing the rows would no
+  // longer close anything.
   useEffect(() => {
     function onClick(e: MouseEvent) {
-      if (!box.current?.contains(e.target as Node)) setHits([]);
+      if (!box.current?.contains(e.target as Node)) setClosed(true);
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  const short = query.trim().length > 0 && query.trim().length < MIN;
+  const short = !closed && query.trim().length > 0 && query.trim().length < MIN;
+  const searching = !closed && query.trim().length >= MIN;
+  const dated = from !== "" || to !== "";
 
   return (
     <div ref={box} className="relative w-full md:w-72">
       <Input
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setClosed(false);
+        }}
+        onFocus={() => setClosed(false)}
         onKeyDown={(e) => e.key === "Escape" && setQuery("")}
         placeholder="Search people, leads, messages"
         className="text-sm md:h-8"
       />
 
-      {(hits.length > 0 || short || error) && (
+      {/* Open for any live search, not only one with results. A date range that matches
+          nothing used to close the panel, which took the date inputs away with it and
+          left no way to widen the range again. */}
+      {(searching || short || error) && (
         <div className="absolute left-0 right-0 top-9 z-20 max-h-96 overflow-y-auto rounded border border-border bg-background shadow-lg">
+          {searching && (
+            <div className="flex items-center gap-1 border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
+              <input
+                type="date"
+                aria-label="From date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5"
+              />
+              <span>to</span>
+              <input
+                type="date"
+                aria-label="To date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5"
+              />
+              {dated && (
+                <button
+                  onClick={() => {
+                    setFrom("");
+                    setTo("");
+                  }}
+                  className="shrink-0 underline"
+                >
+                  Any date
+                </button>
+              )}
+            </div>
+          )}
+
           {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
           {short && !error && (
             <p className="px-3 py-2 text-xs text-muted-foreground">Keep typing — {MIN} letters.</p>
+          )}
+          {searching && busy && hits.length === 0 && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">Searching…</p>
+          )}
+          {searching && !busy && !error && hits.length === 0 && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              {dated ? "Nothing in those dates." : "Nothing found."}
+            </p>
           )}
           {hits.map((hit) => (
             <button
@@ -123,11 +183,6 @@ export default function Search({
         </div>
       )}
 
-      {busy && query.trim().length >= MIN && hits.length === 0 && (
-        <div className="absolute left-0 right-0 top-9 z-20 rounded border border-border bg-background px-3 py-2 text-xs text-muted-foreground shadow-lg">
-          Searching…
-        </div>
-      )}
     </div>
   );
 }

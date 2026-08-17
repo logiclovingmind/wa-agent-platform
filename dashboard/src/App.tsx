@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { Button } from "./components/ui/button";
+import ErrorBoundary from "./ErrorBoundary";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
 import Inbox from "./Inbox";
@@ -181,15 +182,20 @@ export default function App() {
           </Button>
         </nav>
         <div className="min-h-0 flex-1">
-          <Suspense fallback={<Loading />}>
-            {adminView === "security" ? (
-              <MfaSetup />
-            ) : adminView === "console" ? (
-              <Console />
-            ) : (
-              <Admin />
-            )}
-          </Suspense>
+          {/* Keyed on the view: this shell swaps screens in one slot rather than keeping
+              them mounted, so without a key a boundary tripped on one screen would still
+              be showing its message after the admin had navigated to another. */}
+          <ErrorBoundary key={adminView} label="This screen">
+            <Suspense fallback={<Loading />}>
+              {adminView === "security" ? (
+                <MfaSetup />
+              ) : adminView === "console" ? (
+                <Console />
+              ) : (
+                <Admin />
+              )}
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </div>
     );
@@ -263,27 +269,27 @@ export default function App() {
       <div className="min-h-0 flex-1">
         <Suspense fallback={<Loading />}>
           {mounted.pulse && (
-            <Pane show={view === "pulse"}>
+            <Pane show={view === "pulse"} label="Flowin">
               <Flowin orgId={orgId} onOpenDiary={() => setView("diary")} />
             </Pane>
           )}
           {mounted.inbox && (
-            <Pane show={view === "inbox"}>
+            <Pane show={view === "inbox"} label="The inbox">
               <Inbox isOwner={isOwner} jumpTo={jumpTo} />
             </Pane>
           )}
           {mounted.diary && (
-            <Pane show={view === "diary"}>
+            <Pane show={view === "diary"} label="The diary">
               <Diary orgId={orgId} isOwner={isOwner} />
             </Pane>
           )}
           {mounted.admin && isPlatformAdmin && (
-            <Pane show={view === "admin"}>
+            <Pane show={view === "admin"} label="The client list">
               <Admin />
             </Pane>
           )}
           {mounted.console && isPlatformAdmin && (
-            <Pane show={view === "console"}>
+            <Pane show={view === "console"} label="The training console">
               <Console />
             </Pane>
           )}
@@ -294,8 +300,20 @@ export default function App() {
 }
 
 /** `display: none` rather than unmounting, so a tab that has been opened stays ready. */
-function Pane({ show, children }: { show: boolean; children: React.ReactNode }) {
-  return <div className={show ? "h-full" : "hidden"}>{children}</div>;
+function Pane({
+  show,
+  label,
+  children,
+}: {
+  show: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={show ? "h-full" : "hidden"}>
+      <ErrorBoundary label={label}>{children}</ErrorBoundary>
+    </div>
+  );
 }
 
 function Loading() {

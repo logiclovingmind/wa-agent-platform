@@ -28,6 +28,15 @@ beforeAll(async () => {
     null,
     null,
   ]);
+
+  // Pinned to 19:00 UTC on 1 March, which is 00:30 IST on the 2nd — the hour that tells
+  // an IST-day filter apart from one that compares UTC.
+  await db.query(
+    `insert into messages (org_id, conversation_id, wa_message_id, direction, body, created_at)
+     values ($1, $2, 'wamid.ist-midnight', 'inbound', 'what is the timetable',
+             '2027-03-01T19:00:00Z')`,
+    [fx.orgA, fx.convA],
+  );
 });
 
 afterAll(async () => {
@@ -40,6 +49,23 @@ function search(userId: string, orgId: string, query: string) {
       await db.query<{ kind: string; conversation_id: string }>(
         "select kind, conversation_id from public.search_everything($1, $2)",
         [orgId, query],
+      )
+    ).rows,
+  );
+}
+
+function searchBetween(
+  userId: string,
+  orgId: string,
+  query: string,
+  from: string | null,
+  to: string | null,
+) {
+  return asUser(db, userId, async () =>
+    (
+      await db.query<{ kind: string; conversation_id: string }>(
+        "select kind, conversation_id from public.search_everything($1, $2, $3, $4)",
+        [orgId, query, from, to],
       )
     ).rows,
   );
@@ -73,6 +99,46 @@ describe("search_everything", () => {
     expect(hits.every((r) => r.conversation_id === fx.convA)).toBe(true);
 
     await expect(search(fx.userA, fx.orgB, "Ananya")).rejects.toThrow(/not a member/i);
+  });
+
+  it("keeps answering when no dates are given", async () => {
+    // The old two-argument signature was dropped for this one. Both shapes have to keep
+    // working or every deployed browser tab loses its search box at once.
+    expect(await searchBetween(fx.userA, fx.orgA, "timetable", null, null)).toEqual([
+      { kind: "message", conversation_id: fx.convA },
+    ]);
+  });
+
+  it("counts the last day by IST, not by UTC", async () => {
+    const hit = [{ kind: "message", conversation_id: fx.convA }];
+
+    // 00:30 IST on the 2nd. A range ending on the 1st must not reach it, and a range
+    // starting on the 2nd must. Comparing the raw UTC instant gets both of these
+    // backwards, and the failure is invisible: the owner simply sees no results.
+    expect(await searchBetween(fx.userA, fx.orgA, "timetable", "2027-03-02", "2027-03-02")).toEqual(
+      hit,
+    );
+    expect(
+      await searchBetween(fx.userA, fx.orgA, "timetable", "2027-03-01", "2027-03-01"),
+    ).toEqual([]);
+
+    // Inclusive at both ends, the way a person reads "1 March to 3 March".
+    expect(await searchBetween(fx.userA, fx.orgA, "timetable", "2027-03-01", "2027-03-03")).toEqual(
+      hit,
+    );
+  });
+
+  it("takes one bound on its own", async () => {
+    expect(await searchBetween(fx.userA, fx.orgA, "timetable", "2027-03-02", null)).toEqual([
+      { kind: "message", conversation_id: fx.convA },
+    ]);
+    expect(await searchBetween(fx.userA, fx.orgA, "timetable", null, "2027-03-01")).toEqual([]);
+  });
+
+  it("still refuses another org with dates supplied", async () => {
+    await expect(
+      searchBetween(fx.userA, fx.orgB, "Ananya", "2027-03-01", "2027-03-31"),
+    ).rejects.toThrow(/not a member/i);
   });
 
   it("does not let the anon key call it at all", async () => {
