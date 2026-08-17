@@ -39,6 +39,19 @@ export default function Search({
   const [closed, setClosed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setClosed(false);
+      field.current?.focus();
+      field.current?.select();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     const q = query.trim();
@@ -93,8 +106,9 @@ export default function Search({
   const dated = from !== "" || to !== "";
 
   return (
-    <div ref={box} className="relative w-full md:w-72">
+    <div ref={box} className="relative w-full">
       <Input
+        ref={field}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -102,15 +116,22 @@ export default function Search({
         }}
         onFocus={() => setClosed(false)}
         onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-        placeholder="Search people, leads, messages"
-        className="text-sm md:h-8"
+        placeholder="Search"
+        className="border-transparent bg-black/[0.04] pr-10 text-sm md:h-8"
       />
+      {/* Shown because it works, not as decoration. */}
+      <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[11px] text-muted-foreground md:block">
+        ⌘K
+      </kbd>
 
       {/* Open for any live search, not only one with results. A date range that matches
           nothing used to close the panel, which took the date inputs away with it and
-          left no way to widen the range again. */}
+          left no way to widen the range again.
+
+          It escapes the sidebar column from `md` and lies over the pane beside it: a
+          224px-wide results list truncates every name it finds. */}
       {(searching || short || error) && (
-        <div className="absolute left-0 right-0 top-9 z-20 max-h-96 overflow-y-auto rounded border border-border bg-background shadow-lg">
+        <div className="absolute left-0 right-0 top-9 z-20 max-h-96 overflow-y-auto rounded-lg border border-border bg-background shadow-lg md:right-auto md:w-96">
           {searching && (
             <div className="flex items-center gap-1 border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
               <input

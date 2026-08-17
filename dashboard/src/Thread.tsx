@@ -12,7 +12,7 @@ import Attachment, { useSignedUrls } from "./Attachment";
 import { erase, exportConversation, release, reply, takeover } from "./lib/api";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
-import { cn, ist, useNow, windowLeft } from "./lib/utils";
+import { cn, ist, istDay, istTime, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
 
 /** Invariant 7. Also the egress budget: a thousand-message thread is 5GB in a few opens. */
 const PAGE = 20;
@@ -69,7 +69,11 @@ export default function Thread({
   // Held as the pretty-printed text the file would contain, so what is read on screen
   // and what lands on disk cannot drift apart.
   const [exported, setExported] = useState<string | null>(null);
+  // Everything that is not "call this person" lives behind one button. The header used
+  // to carry four, which made the destructive one look like the others.
+  const [menuOpen, setMenuOpen] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
 
   useNow();
   const left = windowLeft(conversation.window_expires_at);
@@ -88,7 +92,17 @@ export default function Thread({
   useEffect(() => {
     setConfirmErase(false);
     setExported(null);
+    setMenuOpen(false);
   }, [id]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function away(e: MouseEvent) {
+      if (!menu.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [menuOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,103 +215,126 @@ export default function Thread({
     });
   }
 
+  // What this customer wants, in the header, because that is what someone about to pick
+  // up the phone needs in front of them. The number is the fallback, not the headline.
+  const subtitle = [lead?.intent, lead?.timeframe, lead?.budget].filter(Boolean).join(" · ");
+  const firstName = (conversation.customer_name ?? "").split(" ")[0] ?? "";
+
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <header className="flex items-center justify-between gap-3 border-b border-border px-3 py-3 md:px-4">
+        <div className="flex min-w-0 items-center gap-1">
+          {/* Visible on desktop too. Once a conversation is open there was no way back to
+              the day's numbers except a keystroke nobody had been told about. */}
           <Button
             variant="ghost"
             size="sm"
-            className="-ml-2 shrink-0 md:hidden"
+            className="shrink-0 px-2"
             onClick={onBack}
-            aria-label="Back to conversations"
+            aria-label="Back"
           >
             ←
           </Button>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{customerLabel(conversation)}</div>
-            <div className="text-xs text-muted-foreground">
-              {/* The number as well as the name here, unlike the list: this is where an
-                  owner goes to look a customer up in their own records. */}
-              {conversation.customer_name && <>+{conversation.customer_wa_id}{" · "}</>}
-              {human ? "You are replying" : "Bot is replying"}
-              {left && (
-                <>
-                  {" · "}
-                  <span className={cn(left.urgent && "font-medium text-destructive")}>
-                    {left.text}
-                  </span>
-                  {!left.closed && ` · closes ${ist(conversation.window_expires_at)}`}
-                </>
+            <div className="truncate text-[17px] font-semibold leading-tight">
+              {customerLabel(conversation)}
+            </div>
+            <div className="mt-0.5 truncate text-[13px] text-muted-foreground">
+              {subtitle || `+${conversation.customer_wa_id}`}
+              {left?.urgent && (
+                <span className="font-medium text-destructive"> · {left.text}</span>
               )}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Owner-only here because they are owner-only at the Worker; staff would get
-              a 403 from a button that looked available. */}
-          {isOwner &&
-            (confirmErase ? (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => setConfirmErase(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    act(async () => {
-                      await erase(id);
-                      setConfirmErase(false);
-                      setReloadKey((n) => n + 1);
-                    })
-                  }
-                >
-                  {flags.length > 0 ? "Erase content, keep the flag" : "Erase permanently"}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    act(async () => {
-                      // Shown rather than saved. This is the answer to a data-access
-                      // request, and an owner is about to hand it to the customer who
-                      // asked — being able to read it first is the point.
-                      setExported(JSON.stringify(await exportConversation(id), null, 2));
-                    })
-                  }
-                >
-                  Export
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => setConfirmErase(true)}
-                >
-                  Erase
-                </Button>
-              </>
-            ))}
-          {human ? (
+
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The only action promoted out of the menu, because on a callback row it is
+              the whole job. A real `tel:` link, not a button that reopens this screen. */}
+          <a
+            href={`tel:+${conversation.customer_wa_id}`}
+            className="hidden rounded-md bg-emerald-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-700 sm:block"
+          >
+            Call +{conversation.customer_wa_id}
+          </a>
+
+          <div ref={menu} className="relative">
             <Button
               variant="outline"
               size="sm"
-              disabled={busy}
-              onClick={() => act(() => release(id), "bot")}
+              aria-label="More"
+              onClick={() => setMenuOpen((v) => !v)}
             >
-              Hand back to bot
+              ···
             </Button>
-          ) : (
-            <Button size="sm" disabled={busy} onClick={() => act(() => takeover(id), "human")}>
-              Take over
-            </Button>
-          )}
+            {menuOpen && (
+              <div className="absolute right-0 top-9 z-20 w-72 overflow-hidden rounded-lg border border-border bg-background py-1 shadow-lg">
+                <MenuItem
+                  disabled={busy}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void act(
+                      () => (human ? release(id) : takeover(id)),
+                      human ? "bot" : "human",
+                    );
+                  }}
+                >
+                  {human ? "Hand back to the assistant" : "Take over this conversation"}
+                </MenuItem>
+
+                {lead && !conversation.followed_up_at && (
+                  <MenuItem
+                    disabled={busy}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void followUp();
+                    }}
+                  >
+                    Mark called back
+                  </MenuItem>
+                )}
+
+                <MenuItem
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(`+${conversation.customer_wa_id}`);
+                    setMenuOpen(false);
+                  }}
+                >
+                  +{conversation.customer_wa_id} — copy
+                </MenuItem>
+
+                {/* Owner-only here because they are owner-only at the Worker; staff would
+                    get a 403 from a button that looked available. */}
+                {isOwner && (
+                  <>
+                    <MenuItem
+                      disabled={busy}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        // Shown rather than saved. This is the answer to a data-access
+                        // request, and an owner is about to hand it to the customer who
+                        // asked — being able to read it first is the point.
+                        void act(async () => {
+                          setExported(JSON.stringify(await exportConversation(id), null, 2));
+                        });
+                      }}
+                    >
+                      Export everything held about this customer
+                    </MenuItem>
+                    <MenuItem
+                      destructive
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setConfirmErase(true);
+                      }}
+                    >
+                      Erase permanently
+                    </MenuItem>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -329,10 +366,29 @@ export default function Thread({
       )}
 
       {confirmErase && (
-        <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs">
-          {flags.length > 0
-            ? "This conversation is flagged. Message content goes; the flag, timestamps and message ids stay, because they are the proof the system responded correctly."
-            : "Every message in this conversation is deleted, along with any stored attachments. This cannot be undone."}
+        <div className="flex flex-wrap items-center gap-3 border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-[13px]">
+          <p className="min-w-0 flex-1">
+            {flags.length > 0
+              ? "This conversation is flagged. Message content goes; the flag, timestamps and message ids stay, because they are the proof the system responded correctly."
+              : "Every message in this conversation is deleted, along with any stored attachments. This cannot be undone."}
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => setConfirmErase(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                await erase(id);
+                setConfirmErase(false);
+                setReloadKey((n) => n + 1);
+              })
+            }
+          >
+            {flags.length > 0 ? "Erase content, keep the flag" : "Erase permanently"}
+          </Button>
         </div>
       )}
 
@@ -363,40 +419,36 @@ export default function Thread({
       {/* What the assistant heard, next to the conversation it heard it in. There is no
           separate leads screen: this is the detail, the list is the worklist, and the
           CSV is the thing an owner actually files. */}
+      {/* Collapsed by default. It is the same facts as the header subtitle, spelled out —
+          worth one click when you need it, not worth a permanent panel between the name
+          and the conversation. */}
       {lead && (
-        <div className="border-b border-border px-4 py-3">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">
-              What they told the assistant
-            </span>
-            {conversation.followed_up_at ? (
-              <span className="text-xs text-muted-foreground">
-                called back {ist(conversation.followed_up_at)}
-              </span>
-            ) : (
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => void followUp()}>
-                Mark called back
-              </Button>
-            )}
-          </div>
-          <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+        <details className="border-b border-border px-4 py-2.5 text-[13px]">
+          <summary className="cursor-pointer list-none text-muted-foreground marker:content-none">
+            <span className="mr-1 inline-block text-[10px]">▸</span>
+            {subtitle || "What they told the assistant"}
+          </summary>
+          <dl className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
             <Learned label="Name given" value={lead.name} />
             <Learned label="Wants" value={lead.intent} />
             <Learned label="When" value={lead.timeframe} />
             <Learned label="Budget" value={lead.budget} />
             <Learned label="Notes" value={lead.notes} />
           </dl>
-        </div>
+          <p className="mt-3 text-muted-foreground">
+            {conversation.followed_up_at
+              ? `Called back ${ist(conversation.followed_up_at)}.`
+              : "Nobody has marked this one called back."}
+          </p>
+        </details>
       )}
 
-      {left?.closed && (
-        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
-          The 24-hour window has closed. Meta rejects an ordinary reply now — only an
-          approved template can reach this customer, and Meta charges for it.
-        </div>
-      )}
-
-      <div className="flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-4">
+      {/* The scroller is full width so the scrollbar sits at the window edge, but the
+          reading measure is capped. On a wide desktop an uncapped thread stretches a
+          chat bubble to a thousand pixels, which is unreadable in the literal sense —
+          the eye loses the line it was on. */}
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+        <div className="mx-auto max-w-[680px] space-y-2">
         {more && (
           <div className="text-center">
             <Button variant="ghost" size="sm" onClick={loadOlder}>
@@ -404,74 +456,142 @@ export default function Thread({
             </Button>
           </div>
         )}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={cn(
-              "max-w-[70%] rounded-md px-3 py-2 text-sm",
-              m.direction === "inbound"
-                ? "bg-muted"
-                : "ml-auto bg-primary text-primary-foreground",
-            )}
-          >
-            {m.type !== "text" && (
-              <div className="mb-1">
-                <Attachment
-                  message={m}
-                  url={m.media_key ? mediaUrls.get(m.media_key) : undefined}
-                />
-                {/* Read off the row, never inferred from the type: an image whose
-                    classification failed is as unscreened as a voice note, and a badge
-                    that guessed would call it checked. Inbound only — an outbound
-                    attachment is something we sent. */}
-                {m.direction === "inbound" && !m.safety_screened && (
-                  <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-amber-600">
-                    Not screened — read it yourself
-                  </div>
-                )}
+        {messages.map((m, i) => {
+          const inbound = m.direction === "inbound";
+          // A day separator only where the day actually changes, so a thread that all
+          // happened this morning gets one "Today" and not one per message.
+          const prev = messages[i - 1];
+          const newDay = !prev || istDay(prev.created_at) !== istDay(m.created_at);
+          return (
+            <div key={m.id}>
+              {newDay && (
+                <div className="py-3 text-center text-[12px] text-muted-foreground">
+                  {dayLabel(m.created_at)}
+                </div>
+              )}
+              <div className={cn("flex flex-col", inbound ? "items-start" : "items-end")}>
+                {/* Timestamps sit outside the bubble. Inside, they were competing with the
+                    message for the same block of colour. */}
+                <div
+                  className={cn(
+                    "max-w-[78%] rounded-2xl px-3.5 py-2 text-[15px] leading-snug",
+                    inbound ? "bg-muted" : "bg-primary text-primary-foreground",
+                  )}
+                >
+                  {m.type !== "text" && (
+                    <div className="mb-1">
+                      <Attachment
+                        message={m}
+                        url={m.media_key ? mediaUrls.get(m.media_key) : undefined}
+                      />
+                      {/* Read off the row, never inferred from the type: an image whose
+                          classification failed is as unscreened as a voice note, and a
+                          badge that guessed would call it checked. Inbound only — an
+                          outbound attachment is something we sent. */}
+                      {inbound && !m.safety_screened && (
+                        <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-amber-600">
+                          Not screened — read it yourself
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {m.body && <div className="whitespace-pre-wrap">{m.body}</div>}
+                </div>
+                <div className="mt-1 px-1 text-[11px] text-muted-foreground">
+                  {istTime(m.created_at)}
+                  {!inbound && m.status ? ` · ${m.status}` : ""}
+                </div>
               </div>
-            )}
-            {m.body && <div className="whitespace-pre-wrap">{m.body}</div>}
-            <div className="mt-1 text-[10px] opacity-60">
-              {ist(m.created_at)}
-              {m.direction === "outbound" && m.status ? ` · ${m.status}` : ""}
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={bottom} />
-      </div>
-
-      <div className="border-t border-border p-3">
-        {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
-        <div className="flex gap-2">
-          <Textarea
-            rows={2}
-            value={draft}
-            disabled={!human || busy || left?.closed === true}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={
-              left?.closed
-                ? "Window closed — needs a template"
-                : human
-                  ? "Reply as yourself"
-                  : "Take over to reply"
-            }
-          />
-          <Button
-            disabled={!human || busy || draft.trim() === "" || left?.closed === true}
-            onClick={send}
-          >
-            Send
-          </Button>
         </div>
       </div>
+
+      {/* Who is holding the conversation is stated here rather than in the header,
+          because this is where it changes what you can do. */}
+      <div className="border-t border-border bg-muted/40 px-4 py-3">
+        {error && <p className="mb-2 text-center text-[13px] text-destructive">{error}</p>}
+        <p className="mb-2 text-center text-[13px] text-muted-foreground">
+          {left?.closed
+            ? "The 24-hour window has closed. Only an approved template can reach this customer now, and Meta charges for it."
+            : human
+              ? "You're replying. The assistant is paused."
+              : "The assistant is replying."}
+        </p>
+
+        {human ? (
+          <div className="mx-auto flex max-w-[680px] items-end gap-2">
+            <Textarea
+              rows={1}
+              value={draft}
+              disabled={busy || left?.closed === true}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={
+                left?.closed ? "Window closed — needs a template" : `Message ${firstName || "them"}`
+              }
+              className="min-h-10 resize-none rounded-xl bg-background"
+            />
+            <Button
+              className="shrink-0 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+              disabled={busy || draft.trim() === "" || left?.closed === true}
+              onClick={send}
+            >
+              Send ⏎
+            </Button>
+          </div>
+        ) : (
+          <div className="flex justify-center">
+            <Button
+              disabled={busy || left?.closed === true}
+              onClick={() => act(() => takeover(id), "human")}
+            >
+              Take over to reply
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function dayLabel(iso: string): string {
+  const day = istDay(iso);
+  const today = istToday();
+  if (day === today) return "Today";
+  if (day === shiftDay(today, -1)) return "Yesterday";
+  return day;
+}
+
+function MenuItem({
+  onClick,
+  disabled,
+  destructive,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "block w-full px-3 py-2 text-left text-[13px] hover:bg-muted disabled:opacity-50",
+        destructive && "text-destructive",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

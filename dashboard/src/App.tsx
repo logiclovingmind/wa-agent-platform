@@ -1,11 +1,13 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
+import { Activity, CalendarDays, CircleDot, type LucideIcon } from "lucide-react";
+import { cn } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import ErrorBoundary from "./ErrorBoundary";
 import SignIn from "./SignIn";
 import SetPassword from "./SetPassword";
-import Inbox from "./Inbox";
+import Desk from "./Desk";
 import Search from "./Search";
 import { MfaChallenge, MfaSetup, mfaOwed } from "./Mfa";
 
@@ -19,14 +21,17 @@ const Admin = lazy(() => import("./Admin"));
 const Console = lazy(() => import("./Console"));
 const Diary = lazy(() => import("./Diary"));
 
-type View = "inbox" | "pulse" | "diary" | "admin" | "console" | "security";
+type View = "desk" | "pulse" | "diary" | "admin" | "console" | "security";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
-  // Flowin, not the inbox. The inbox is where you go when something needs you; landing
-  // there makes an ordinary quiet day look like the product does nothing.
-  const [view, setView] = useState<View>("pulse");
+  // The desk, not Flowin. This used to land on Flowin because the old inbox showed a
+  // list of conversations, and on a quiet day a list of things nobody needs to do makes
+  // the product look like it did nothing. The desk answers that itself: with nothing
+  // waiting it shows the day's numbers where the queue would be. Landing here also keeps
+  // it mounted, which is what lets the tab carry a dot from the other screens.
+  const [view, setView] = useState<View>("desk");
   /**
    * Which views have been opened at least once. Switching tabs used to unmount one and
    * mount the other, so every tap tore down a screenful of chart SVGs and then sat on a
@@ -39,8 +44,8 @@ export default function App() {
    * invariant 8 requires.
    */
   const [mounted, setMounted] = useState<Record<View, boolean>>({
-    pulse: true,
-    inbox: false,
+    pulse: false,
+    desk: true,
     diary: false,
     admin: false,
     console: false,
@@ -60,6 +65,8 @@ export default function App() {
   // Set by the search box, consumed by the inbox. A hit is a conversation to open, and
   // it may well be older than the fifty rows the list holds.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState(0);
+  const [orgName, setOrgName] = useState("");
   const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
@@ -117,6 +124,19 @@ export default function App() {
       .maybeSingle<{ is_platform_admin: boolean }>();
     setIsPlatformAdmin(me?.is_platform_admin ?? false);
     setIdentified(true);
+
+    // The client's own name in the corner, not ours. Best effort: if RLS or a missing
+    // column says no, the sidebar keeps the logo and nothing breaks — a shell that
+    // fails to render because a decoration failed to load is not a trade worth making.
+    const org = memberships?.[0]?.org_id;
+    if (org) {
+      const { data: row } = await supabase
+        .from("organizations")
+        .select("name")
+        .eq("id", org)
+        .maybeSingle<{ name: string }>();
+      setOrgName(row?.name ?? "");
+    }
   }
 
   if (!ready) return <div className="p-8 text-muted-foreground">Loading…</div>;
@@ -144,7 +164,7 @@ export default function App() {
     // `view` starts on the client landing screen, which this shell does not have. The
     // client list is the equivalent here, and naming it keeps its tab lit on arrival.
     const adminView =
-      view === "pulse" || view === "inbox" || view === "diary" ? "admin" : view;
+      view === "pulse" || view === "desk" || view === "diary" ? "admin" : view;
     return (
       <div className="flex h-dvh flex-col">
         <nav className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
@@ -202,80 +222,95 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-dvh flex-col">
-      {/* Wraps rather than scrolls: on a phone the search box takes a line of its own
-          below the tabs, which is where a thumb expects it anyway. */}
-      <nav className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
-        <img src="/logo.svg" alt="Logic Loving Mind" className="mr-2 h-6 w-6 shrink-0" />
-        <Button
-          variant={view === "pulse" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setView("pulse")}
-        >
-          Flowin
-        </Button>
-        <Button
-          variant={view === "inbox" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setView("inbox")}
-        >
-          WhatsApp
-        </Button>
-        <Button
-          variant={view === "diary" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setView("diary")}
-        >
-          Diary
-        </Button>
-        {/* Only reachable by an account that is both a platform admin and a member of
-            some org, which the split above is meant to make unnecessary. Kept so that
-            granting the flag to an existing client owner does not lock them out of it. */}
-        {isPlatformAdmin && (
-          <Button
-            variant={view === "admin" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setView("admin")}
-          >
-            All clients
-          </Button>
-        )}
-        {isPlatformAdmin && (
-          <Button
-            variant={view === "console" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setView("console")}
-          >
-            Training console
-          </Button>
-        )}
-        <span className="flex-1" />
-        {orgId && (
-          <div className="order-last w-full md:order-none md:w-auto">
-            <Search
-              orgId={orgId}
-              onOpen={(id) => {
-                setView("inbox");
-                setJumpTo(id);
-              }}
-            />
+    /* The app is a card on a desk, not a page. The grey inset only exists from `md`:
+       on a phone the margin is screen you cannot spare, so the card goes full bleed and
+       the sidebar lies down into a strip. */
+    <div className="h-dvh bg-[#F2F2F5] md:p-4">
+      <div className="flex h-full flex-col bg-background md:flex-row md:rounded-xl md:border md:border-black/5 md:shadow-sm">
+        {/* Column from `md`, horizontal strip below it — one set of markup, because two
+            would drift. Deliberately not `overflow-hidden`: the search panel has to be
+            able to escape a 224px column and lie over the content beside it. */}
+        <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 py-2 md:w-56 md:flex-col md:items-stretch md:gap-0.5 md:overflow-visible md:border-b-0 md:border-r md:bg-[#FAFAFA] md:px-3 md:py-4 md:rounded-l-xl">
+          <div className="mr-2 flex shrink-0 items-center gap-2 md:mb-4 md:mr-0 md:px-2">
+            <img src="/logo.svg" alt="" className="h-6 w-6 shrink-0" />
+            <span className="hidden truncate text-sm font-semibold md:block">
+              {orgName || "Logic Loving Mind"}
+            </span>
           </div>
-        )}
-        <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()}>
-          Sign out
-        </Button>
-      </nav>
 
-      <div className="min-h-0 flex-1">
+          {orgId && (
+            <div className="order-last w-full md:order-none md:mb-4 md:w-auto">
+              <Search
+                orgId={orgId}
+                onOpen={(id) => {
+                  setView("desk");
+                  setJumpTo(id);
+                }}
+              />
+            </div>
+          )}
+
+          <NavItem active={view === "pulse"} onClick={() => setView("pulse")} icon={Activity}>
+            Flowin
+          </NavItem>
+          {/* The only state this shell carries. It answers "is anyone waiting" from the
+              Diary, which is the question that otherwise makes someone tab back and
+              forth all morning. A number would invite reading it; a dot does not. */}
+          <NavItem
+            active={view === "desk"}
+            onClick={() => setView("desk")}
+            dot={waiting > 0 ? `${waiting} waiting` : null}
+            icon={CircleDot}
+          >
+            Desk
+          </NavItem>
+          <NavItem active={view === "diary"} onClick={() => setView("diary")} icon={CalendarDays}>
+            Diary
+          </NavItem>
+          {/* Only reachable by an account that is both a platform admin and a member of
+              some org, which the split above is meant to make unnecessary. Kept so that
+              granting the flag to an existing client owner does not lock them out of it. */}
+          {isPlatformAdmin && (
+            <NavItem active={view === "admin"} onClick={() => setView("admin")}>
+              All clients
+            </NavItem>
+          )}
+          {isPlatformAdmin && (
+            <NavItem active={view === "console"} onClick={() => setView("console")}>
+              Training console
+            </NavItem>
+          )}
+
+          <span className="flex-1" />
+
+          {/* The one thing a worried owner wants confirmed, sitting where nothing else
+              competes for it. It is also literally true: the DO hands a conversation back
+              to the model when a human goes quiet. */}
+          <p className="mb-2 hidden px-2 text-[11px] leading-relaxed text-muted-foreground md:block">
+            The assistant is answering.
+            <br />
+            Paused only while you reply.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 md:justify-start"
+            onClick={() => supabase.auth.signOut()}
+          >
+            Sign out
+          </Button>
+        </nav>
+
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden md:rounded-r-xl">
         <Suspense fallback={<Loading />}>
           {mounted.pulse && (
             <Pane show={view === "pulse"} label="Flowin">
               <Flowin orgId={orgId} onOpenDiary={() => setView("diary")} />
             </Pane>
           )}
-          {mounted.inbox && (
-            <Pane show={view === "inbox"} label="The inbox">
-              <Inbox isOwner={isOwner} jumpTo={jumpTo} />
+          {mounted.desk && (
+            <Pane show={view === "desk"} label="The desk">
+              <Desk orgId={orgId} isOwner={isOwner} jumpTo={jumpTo} onWaiting={setWaiting} />
             </Pane>
           )}
           {mounted.diary && (
@@ -294,8 +329,37 @@ export default function App() {
             </Pane>
           )}
         </Suspense>
+        </div>
       </div>
     </div>
+  );
+}
+
+function NavItem({
+  active,
+  onClick,
+  dot,
+  icon: Icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  dot?: string | null;
+  icon?: LucideIcon;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium md:w-full",
+        active ? "bg-black/[0.06] text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {Icon && <Icon className="hidden h-4 w-4 shrink-0 opacity-60 md:block" />}
+      {children}
+      {dot && <span aria-label={dot} className="h-1.5 w-1.5 rounded-full bg-destructive" />}
+    </button>
   );
 }
 
