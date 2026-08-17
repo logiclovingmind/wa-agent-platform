@@ -12,9 +12,9 @@ import Search from "./Search";
 import { MfaChallenge, MfaSetup, mfaOwed } from "./Mfa";
 
 /**
- * Split off rather than imported outright. Flowin carries recharts, which is most of
- * the bundle; Admin and Console are ours and no client account can ever open them. On a
- * phone that is the difference between the inbox arriving and the charts arriving first.
+ * Split off rather than imported outright: Admin and Console are ours and no client
+ * account can ever open them, and Flowin is a screen nobody lands on. On a phone that is
+ * the difference between the desk arriving and everything arriving at once.
  */
 const Flowin = lazy(() => import("./Flowin"));
 const Admin = lazy(() => import("./Admin"));
@@ -305,7 +305,7 @@ export default function App() {
         <Suspense fallback={<Loading />}>
           {mounted.pulse && (
             <Pane show={view === "pulse"} label="Flowin">
-              <Flowin orgId={orgId} onOpenDiary={() => setView("diary")} />
+              <Flowin orgId={orgId} />
             </Pane>
           )}
           {mounted.desk && (

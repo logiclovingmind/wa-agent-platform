@@ -1,17 +1,6 @@
 import { useEffect, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { supabase } from "./lib/supabase";
-import { UpcomingCard } from "./Diary";
+import { Stat } from "./components/screen";
 import { istToday, shiftDay } from "./lib/utils";
 
 /** Five weeks: a full calendar grid, and the window a month of activity fills. */
@@ -45,10 +34,18 @@ interface PulseHour {
  * keep — is answered better by volume, hours covered and speed than by a rupee total
  * that was never their rupee total anyway.
  *
+ * That question now has one answer at the top instead of four equal boxes: the share of
+ * replies that went out without anybody. Everything else on the screen supports it.
+ *
  * Every number here is aggregated in Postgres (`pulse_*`). Counting a month of messages
  * in the browser would spend the shared 5GB egress budget on arithmetic.
+ *
+ * ⚠️ **No charting library.** recharts was 379kB raw for one line, one two-value donut
+ * and a heatmap that was already hand-drawn divs. The line is now an SVG `polyline`, the
+ * donut is a stacked bar, and the owner's phone parses none of it. Adding a chart
+ * dependency back for a fourth chart is not worth it — draw the fourth one too.
  */
-export default function Flowin({ orgId, onOpenDiary }: { orgId: string; onOpenDiary: () => void }) {
+export default function Flowin({ orgId }: { orgId: string }) {
   const [days, setDays] = useState<PulseDay[]>([]);
   const [hours, setHours] = useState<PulseHour[]>([]);
   const [replySeconds, setReplySeconds] = useState<number | null>(null);
@@ -66,7 +63,7 @@ export default function Flowin({ orgId, onOpenDiary }: { orgId: string; onOpenDi
       supabase.rpc("pulse_reply_seconds", { p_org_id: id, p_days: DAYS }),
     ]);
 
-    // Same reason as the inbox: a failed read and a quiet month look identical
+    // Same reason as the desk: a failed read and a quiet month look identical
     // otherwise, and "0 replies" is a claim we should not make when we do not know.
     setLoadError(daily.error?.message ?? hourly.error?.message ?? null);
     setDays((daily.data ?? []) as PulseDay[]);
@@ -96,132 +93,191 @@ export default function Flowin({ orgId, onOpenDiary }: { orgId: string; onOpenDi
   // the ones that cost a model call". Clamped because the two are counted from
   // different tables and a half-written turn would otherwise show a negative person.
   const byHuman = Math.max(outbound - aiReplies, 0);
-
-  const split = [
-    { name: "Answered by the assistant", value: aiReplies, fill: AI },
-    { name: "Answered by your team", value: byHuman, fill: HUMAN },
-  ];
+  const replies = aiReplies + byHuman;
+  const share = replies === 0 ? null : Math.round((aiReplies / replies) * 100);
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
-      <header className="mb-5">
-        <h1 className="text-lg font-semibold">Flowin</h1>
-        <p className="text-sm text-muted-foreground">
-          The last five weeks on WhatsApp, and what is booked next.
-        </p>
-      </header>
+    <div className="h-full overflow-y-auto overscroll-contain">
+      <div className="max-w-3xl px-6 py-8 sm:px-10 sm:py-10">
+        <header>
+          <h1 className="text-[28px] font-semibold leading-none tracking-tight">Flowin</h1>
+          <p className="mt-3 text-[15px] text-muted-foreground">
+            The last five weeks on WhatsApp.
+          </p>
+        </header>
 
-      {loadError && (
-        <p className="mb-6 rounded border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
-          Could not load activity: {loadError}
-        </p>
-      )}
+        {loadError && (
+          <p className="mt-6 rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+            Could not load activity: {loadError}
+          </p>
+        )}
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat value={total((d) => d.conversations).toLocaleString("en-IN")} label="Conversations" />
-        <Stat value={aiReplies.toLocaleString("en-IN")} label="Answered automatically" />
-        <Stat
-          value={total((d) => d.afterHours).toLocaleString("en-IN")}
-          label="Answered out of hours"
-          hint="while you were closed"
-        />
-        <Stat value={speed(replySeconds)} label="Typical reply time" />
-      </div>
-
-      {/* The one forward-looking thing on an otherwise entirely retrospective screen, and
-          high up rather than at the bottom: "who is coming in" is the question an owner
-          opens this on a phone to answer, and it does not survive a scroll past two
-          charts. The calendar itself is the Diary tab; this is the glance. */}
-      <div className="mb-4">
-        <UpcomingCard orgId={orgId} onOpen={onOpenDiary} />
-      </div>
-
-      <div className="mb-4 grid gap-4 lg:grid-cols-3">
-        <section className="rounded border border-border p-4 lg:col-span-2">
-          <Title>Conversations per day</Title>
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={grid} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
-              <defs>
-                <linearGradient id="pulseFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={AI} stopOpacity={0.5} />
-                  <stop offset="100%" stopColor={AI} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="day"
-                tickFormatter={(d: string) => d.slice(8)}
-                tick={{ fontSize: 10 }}
-                interval={4}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} width={36} />
-              <Tooltip
-                contentStyle={{ fontSize: 12, borderRadius: 6 }}
-                labelFormatter={(d) => (typeof d === "string" ? dayLabel(d) : d)}
-              />
-              <Area
-                type="monotone"
-                dataKey="conversations"
-                name="Conversations"
-                stroke={AI}
-                fill="url(#pulseFill)"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </section>
-
-        <section className="rounded border border-border p-4">
-          <Title>Who answered</Title>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie
-                data={split}
-                dataKey="value"
-                nameKey="name"
-                innerRadius="58%"
-                outerRadius="82%"
-                paddingAngle={2}
-                strokeWidth={0}
-              >
-                {split.map((s) => (
-                  <Cell key={s.name} fill={s.fill} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="mt-2 space-y-1 text-xs">
-            {split.map((s) => (
-              <div key={s.name} className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full" style={{ background: s.fill }} />
-                <span className="flex-1 text-muted-foreground">{s.name}</span>
-                <span>{s.value.toLocaleString("en-IN")}</span>
-              </div>
-            ))}
+        {/* The whole screen in one number. It used to be the second of four equal boxes,
+            which is a strange place to keep the only figure that answers "is this thing
+            worth paying for". */}
+        <div className="mt-10">
+          <div className="text-[48px] font-semibold leading-none tracking-tight tabular-nums">
+            {share === null ? "—" : `${share}%`}
           </div>
-        </section>
+          <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
+            {replies === 0
+              ? "No replies have gone out in the last five weeks."
+              : `${aiReplies.toLocaleString("en-IN")} of ${replies.toLocaleString(
+                  "en-IN",
+                )} replies went out without anyone on your team touching them.`}
+          </p>
+        </div>
+
+        <div className="mt-10 grid grid-cols-2 gap-x-8 gap-y-8 sm:grid-cols-3">
+          <Stat n={total((d) => d.conversations).toLocaleString("en-IN")} label="conversations" />
+          <Stat
+            n={total((d) => d.afterHours).toLocaleString("en-IN")}
+            label="answered while you were closed"
+          />
+          <Stat n={speed(replySeconds)} label="typical reply" />
+        </div>
+
+        <Block title="Conversations per day">
+          <Trend grid={grid} />
+        </Block>
+
+        <Block title="Who answered">
+          {replies === 0 ? (
+            <p className="text-[13px] text-muted-foreground">Nothing has been answered yet.</p>
+          ) : (
+            <>
+              <div className="flex h-2.5 overflow-hidden rounded-full">
+                <div style={{ width: `${(aiReplies / replies) * 100}%`, background: AI }} />
+                <div style={{ width: `${(byHuman / replies) * 100}%`, background: HUMAN }} />
+              </div>
+              <div className="mt-3 space-y-1.5 text-[13px]">
+                <Legend color={AI} label="Answered by the assistant" n={aiReplies} />
+                <Legend color={HUMAN} label="Answered by your team" n={byHuman} />
+              </div>
+            </>
+          )}
+        </Block>
+
+        <Block title="When your customers message">
+          <Hours hours={hours} />
+        </Block>
+      </div>
+    </div>
+  );
+}
+
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-10 border-t border-border pt-6">
+      <h2 className="mb-4 text-[13px] text-muted-foreground">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Legend({ color, label, n }: { color: string; label: string; n: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="flex-1 text-muted-foreground">{label}</span>
+      <span className="tabular-nums">{n.toLocaleString("en-IN")}</span>
+    </div>
+  );
+}
+
+/**
+ * Five weeks of daily volume.
+ *
+ * The axis labels are HTML beside the SVG rather than `<text>` inside it, which is what
+ * lets the drawing stretch to any width without the type stretching with it — and it is
+ * why the y-axis numbers are no longer clipped to one glyph, as they were when recharts
+ * was given a negative left margin to claw back space.
+ *
+ * Hover uses one transparent `<rect>` per day carrying a `<title>`, so the browser draws
+ * the tooltip and this screen ships no tooltip code.
+ */
+function Trend({ grid }: { grid: { day: string; conversations: number }[] }) {
+  const W = 700;
+  const H = 180;
+  const peak = Math.max(...grid.map((d) => d.conversations), 1);
+  const step = W / Math.max(grid.length - 1, 1);
+
+  const points = grid.map((d, i) => {
+    const x = i * step;
+    const y = H - (d.conversations / peak) * H;
+    return { x, y, d };
+  });
+
+  const line = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const area = [
+    `M0,${H}`,
+    ...points.map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`),
+    `L${W},${H}`,
+    "Z",
+  ].join(" ");
+
+  return (
+    <div className="flex gap-3">
+      {/* Its own column, so the numbers can never be clipped by the drawing. */}
+      <div className="flex w-8 shrink-0 flex-col justify-between text-right text-[11px] tabular-nums text-muted-foreground">
+        <span>{peak}</span>
+        <span>{Math.round(peak / 2)}</span>
+        <span>0</span>
       </div>
 
-      <Hours hours={hours} />
-    </div>
-  );
-}
+      <div className="min-w-0 flex-1">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="h-[180px] w-full overflow-visible"
+          role="img"
+          aria-label="Conversations per day over the last five weeks"
+        >
+          <defs>
+            <linearGradient id="flowinFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={AI} stopOpacity={0.45} />
+              <stop offset="100%" stopColor={AI} stopOpacity={0} />
+            </linearGradient>
+          </defs>
 
-function Stat({ value, label, hint }: { value: string; label: string; hint?: string }) {
-  return (
-    <div className="rounded border border-border p-3 sm:p-4">
-      <div className="text-2xl font-semibold tabular-nums sm:text-3xl">{value}</div>
-      <div className="mt-1 text-xs text-muted-foreground">{label}</div>
-      {hint && <div className="text-[11px] text-muted-foreground/70">{hint}</div>}
-    </div>
-  );
-}
+          {/* `non-scaling-stroke` is what keeps a 2px line 2px after the viewBox has been
+              stretched to the pane's width. Without it the line thickens with the window. */}
+          <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="currentColor" strokeWidth="1"
+            className="text-border" vectorEffect="non-scaling-stroke" />
+          <path d={area} fill="url(#flowinFill)" />
+          <polyline
+            points={line}
+            fill="none"
+            stroke={AI}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
 
-function Title({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">{children}</div>
+          {points.map((p) => (
+            <rect
+              key={p.d.day}
+              x={p.x - step / 2}
+              y={0}
+              width={step}
+              height={H}
+              fill="transparent"
+            >
+              <title>
+                {dayLabel(p.d.day)} — {p.d.conversations}{" "}
+                {p.d.conversations === 1 ? "conversation" : "conversations"}
+              </title>
+            </rect>
+          ))}
+        </svg>
+
+        <div className="mt-2 flex justify-between text-[11px] tabular-nums text-muted-foreground">
+          <span>{dayLabel(grid[0]!.day)}</span>
+          <span>{dayLabel(grid[Math.floor(grid.length / 2)]!.day)}</span>
+          <span>Today</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -237,12 +293,11 @@ function Hours({ hours }: { hours: PulseHour[] }) {
   const at = new Map(hours.map((h) => [`${h.dow}-${h.hour}`, Number(h.messages)]));
 
   return (
-    <section className="overflow-x-auto rounded border border-border p-4">
-      <Title>When your customers message</Title>
+    <div className="overflow-x-auto">
       <div className="min-w-[20rem] space-y-1">
         {DOW.map((label, dow) => (
           <div key={label} className="flex items-center gap-2">
-            <span className="w-7 shrink-0 text-[10px] text-muted-foreground">{label}</span>
+            <span className="w-7 shrink-0 text-[11px] text-muted-foreground">{label}</span>
             <div className="flex flex-1 gap-[2px]">
               {Array.from({ length: 24 }, (_, hour) => {
                 const n = at.get(`${dow}-${hour}`) ?? 0;
@@ -264,12 +319,12 @@ function Hours({ hours }: { hours: PulseHour[] }) {
           </div>
         ))}
       </div>
-      <div className="mt-2 flex justify-between pl-9 text-[10px] text-muted-foreground">
+      <div className="mt-2 flex justify-between pl-9 text-[11px] text-muted-foreground">
         <span>12am</span>
         <span>noon</span>
         <span>11pm</span>
       </div>
-    </section>
+    </div>
   );
 }
 

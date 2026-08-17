@@ -9,7 +9,14 @@ import {
   type SafetyFlag,
 } from "./lib/supabase";
 import Attachment, { useSignedUrls } from "./Attachment";
-import { erase, exportConversation, release, reply, takeover } from "./lib/api";
+import {
+  erase,
+  exportConversation,
+  release,
+  reply,
+  takeover,
+  type ConversationExport,
+} from "./lib/api";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { cn, ist, istDay, istTime, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
@@ -30,8 +37,8 @@ function merge(a: Message[], b: Message[]): Message[] {
 }
 
 /** Saves without a server round trip: the Worker already returned the whole export. */
-function downloadJson(filename: string, text: string): void {
-  const blob = new Blob([text], { type: "application/json" });
+function downloadJson(filename: string, payload: ConversationExport): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -66,9 +73,12 @@ export default function Thread({
   const [confirmErase, setConfirmErase] = useState(false);
   // Erasure rewrites the thread underneath us, and Realtime does not deliver deletes.
   const [reloadKey, setReloadKey] = useState(0);
-  // Held as the pretty-printed text the file would contain, so what is read on screen
-  // and what lands on disk cannot drift apart.
-  const [exported, setExported] = useState<string | null>(null);
+  // Held as the payload itself, and both the screen and the downloaded file are rendered
+  // from it, so what an owner reads and what they hand over cannot drift apart.
+  const [exported, setExported] = useState<ConversationExport | null>(null);
+  // The readable rendering is the one an owner shows a customer; the raw JSON is the
+  // file they send. Both are needed, so the panel toggles rather than picking one.
+  const [exportRaw, setExportRaw] = useState(false);
   // Everything that is not "call this person" lives behind one button. The header used
   // to carry four, which made the destructive one look like the others.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -92,6 +102,7 @@ export default function Thread({
   useEffect(() => {
     setConfirmErase(false);
     setExported(null);
+    setExportRaw(false);
     setMenuOpen(false);
   }, [id]);
 
@@ -315,7 +326,7 @@ export default function Thread({
                         // request, and an owner is about to hand it to the customer who
                         // asked — being able to read it first is the point.
                         void act(async () => {
-                          setExported(JSON.stringify(await exportConversation(id), null, 2));
+                          setExported(await exportConversation(id));
                         });
                       }}
                     >
@@ -342,8 +353,13 @@ export default function Thread({
         <div className="border-b border-border bg-muted/40 px-4 py-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="mr-auto text-xs uppercase tracking-wide text-muted-foreground">
-              Everything held about this customer
+              Everything held about this customer — {exported.messages.length}{" "}
+              {exported.messages.length === 1 ? "message" : "messages"}, taken{" "}
+              {ist(exported.exported_at)}
             </span>
+            <Button variant="ghost" size="sm" onClick={() => setExportRaw(!exportRaw)}>
+              {exportRaw ? "Readable" : "JSON"}
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -353,15 +369,59 @@ export default function Thread({
             >
               Download
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setExported(null)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setExported(null);
+                setExportRaw(false);
+              }}
+            >
               Close
             </Button>
           </div>
+
           {/* Attachments are keys, not bytes, so this stays small enough to read and the
               export cannot pull the egress budget through the Worker. */}
-          <pre className="max-h-72 overflow-auto rounded border border-border bg-background p-3 text-[11px] leading-relaxed">
-            {exported}
-          </pre>
+          {exportRaw ? (
+            <pre className="max-h-72 overflow-auto rounded border border-border bg-background p-3 text-[11px] leading-relaxed">
+              {JSON.stringify(exported, null, 2)}
+            </pre>
+          ) : (
+            <div className="max-h-72 overflow-auto rounded border border-border bg-background text-[13px]">
+              <dl className="grid gap-x-6 gap-y-1 border-b border-border p-3 sm:grid-cols-2">
+                <Learned label="Phone" value={`+${exported.conversation.customer_wa_id}`} />
+                <Learned label="Name" value={exported.conversation.customer_name} />
+                <Learned label="First seen" value={ist(exported.conversation.created_at)} />
+                <Learned
+                  label="Last message"
+                  value={ist(exported.conversation.last_message_at) || null}
+                />
+              </dl>
+              <ol className="divide-y divide-border">
+                {exported.messages.map((m, i) => (
+                  <li key={m.wa_message_id ?? `${m.created_at}-${i}`} className="flex gap-3 p-3">
+                    <span className="w-24 shrink-0 text-muted-foreground">
+                      {ist(m.created_at)}
+                    </span>
+                    <span className="w-20 shrink-0 text-muted-foreground">
+                      {m.direction === "inbound" ? "Customer" : "Business"}
+                    </span>
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                      {m.body || (
+                        <span className="text-muted-foreground/70">
+                          {m.media_key ? `${m.type} — ${m.media_key}` : m.type}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              {exported.messages.length === 0 && (
+                <p className="p-3 text-muted-foreground">No messages are held.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

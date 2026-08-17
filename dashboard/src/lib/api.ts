@@ -449,7 +449,27 @@ export async function erase(conversationId: string): Promise<void> {
  * access right, and a partial answer to it is not an answer. Media comes back as keys
  * rather than bytes, so an export cannot pull the egress budget through the Worker.
  */
-export async function exportConversation(conversationId: string): Promise<unknown> {
+export interface ConversationExport {
+  exported_at: string;
+  conversation: {
+    id: string;
+    customer_wa_id: string;
+    customer_name: string | null;
+    handoff_state: string;
+    created_at: string;
+    last_message_at: string | null;
+  };
+  messages: {
+    wa_message_id: string | null;
+    direction: "inbound" | "outbound";
+    type: string;
+    body: string | null;
+    media_key: string | null;
+    created_at: string;
+  }[];
+}
+
+export async function exportConversation(conversationId: string): Promise<ConversationExport> {
   const res = await post(`/api/conversations/${conversationId}/export`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { type HoursRow } from "./lib/api";
-import { dayOfWeek, istDay, istTime, istToday, shiftDay } from "./lib/utils";
+import { Count, Empty, Group, TabButton } from "./components/screen";
+import { cn, dayOfWeek, istDay, istTime, istToday, shiftDay } from "./lib/utils";
 
 /**
  * The owner's side of the booking calendar.
@@ -11,9 +12,13 @@ import { dayOfWeek, istDay, istTime, istToday, shiftDay } from "./lib/utils";
  * admin's training console, which no client can open. A bot that books into a diary
  * nobody can read is worse than one that does not book at all.
  *
- * Every query here goes straight to Supabase under RLS, like the inbox and Flowin, and
+ * Every query here goes straight to Supabase under RLS, like the desk and Flowin, and
  * unlike the admin console next door — which has to go through the Worker only because
  * the platform admin holds no `org_members` row and RLS would answer it with nothing.
+ *
+ * Shaped like the Desk on purpose: a left column that picks, a right pane that acts. It
+ * used to be a month grid beside a rail of three permanently open forms, which put a
+ * setting nobody edits twice a year at the same weight as this afternoon's appointments.
  */
 
 /** Named columns, never `select *` — invariant 7's rule, applied past `messages`. */
@@ -22,13 +27,15 @@ const BOOKING_COLUMNS =
 
 /**
  * A month of a busy salon is a few hundred rows. The cap is here so that a runaway org
- * cannot pull an unbounded page into the browser on the shared 5GB egress budget; a month
- * that reaches it is a month that needs a different screen, not a bigger fetch.
+ * cannot pull an unbounded page into the browser on the shared 5GB egress budget; a range
+ * that reaches it is a range that needs a different screen, not a bigger fetch.
  */
-const MONTH_LIMIT = 500;
+const RANGE_LIMIT = 500;
 
-/** How many bookings the "next up" list shows before it stops being a glance. */
-const COMING_UP_LIMIT = 6;
+/** Shared by the small forms, so a redesign of one does not leave the other behind. */
+const FIELD = "min-w-0 rounded-md border border-border bg-transparent px-2 py-1 text-[13px]";
+const GO =
+  "shrink-0 rounded-md bg-foreground px-2.5 py-1 text-[13px] font-medium text-background disabled:opacity-50";
 
 export interface Booking {
   id: string;
@@ -49,6 +56,9 @@ interface Slot {
   slot_minutes: number;
 }
 
+/** Which span of days the left column is listing. */
+type Tab = "today" | "week" | "month";
+
 /**
  * Midnight IST on a `YYYY-MM-DD`, as an instant.
  *
@@ -61,11 +71,10 @@ const istMidnight = (day: string) => `${day}T00:00:00+05:30`;
 /** `YYYY-MM` for the month a day belongs to. */
 const monthOf = (day: string) => day.slice(0, 7);
 
-/** First day of the month `delta` months from `YYYY-MM`. */
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y!, m! - 1 + delta, 1));
-  return at.toISOString().slice(0, 7);
+/** First day of the month `delta` months from a `YYYY-MM-DD`. */
+function shiftMonth(day: string, delta: number): string {
+  const [y, m] = day.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1 + delta, 1)).toISOString().slice(0, 10);
 }
 
 const MONTH_NAME = [
@@ -80,13 +89,13 @@ function monthLabel(month: string): string {
 
 /** Monday first, because a working week does. `dayOfWeek` is Postgres `dow`, 0 = Sunday. */
 const COLUMNS = [
-  { dow: 1, label: "Mon" },
-  { dow: 2, label: "Tue" },
-  { dow: 3, label: "Wed" },
-  { dow: 4, label: "Thu" },
-  { dow: 5, label: "Fri" },
-  { dow: 6, label: "Sat" },
-  { dow: 0, label: "Sun" },
+  { dow: 1, label: "M" },
+  { dow: 2, label: "T" },
+  { dow: 3, label: "W" },
+  { dow: 4, label: "T" },
+  { dow: 5, label: "F" },
+  { dow: 6, label: "S" },
+  { dow: 0, label: "S" },
 ];
 
 const columnOf = (day: string) => (dayOfWeek(day) + 6) % 7;
@@ -98,19 +107,44 @@ function who(b: Booking): string {
   return [b.customer_name, b.service].filter(Boolean).join(" · ") || "No name given";
 }
 
+function dayHeading(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).toLocaleDateString("en-IN", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
+
 export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
   const today = istToday();
-  const [month, setMonth] = useState(() => monthOf(today));
+  const [tab, setTab] = useState<Tab>("week");
+  /** The first day of the listed span. Moving it moves the selection with it, which is
+      what keeps the open day inside the rows that were fetched. */
+  const [anchor, setAnchor] = useState(today);
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hours, setHours] = useState<HoursRow[] | null>(null);
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Which form the day pane is showing. Neither, until asked for. */
+  const [action, setAction] = useState<"book" | "block" | null>(null);
 
-  /** The open day. Declared here rather than beside the render, because the effects and
-      the write helpers below all key off it. */
+  /** The open day. On a phone `selected` is also what covers the list with the day. */
   const day = selected ?? today;
+
+  // Only the tab and its anchor decide what is fetched, so these are derived rather than
+  // held: two pieces of state that must agree about a date range eventually will not.
+  const from = tab === "today" ? today : tab === "week" ? anchor : shiftMonth(anchor, 0);
+  const to =
+    tab === "today" ? shiftDay(today, 1) : tab === "week" ? shiftDay(anchor, 7) : shiftMonth(anchor, 1);
+
+  const days = Array.from(
+    { length: tab === "today" ? 1 : 7 },
+    (_, i) => shiftDay(from, i),
+  );
 
   useEffect(() => {
     if (!orgId) return;
@@ -118,16 +152,19 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     // Tapping Next twice quickly fires two reads, and the slower one can answer last. The
     // guard is what stops August's rows painting under September's heading.
     let live = true;
-    void loadMonth(() => live);
+    void loadRange(() => live);
     return () => {
       live = false;
     };
-  }, [orgId, month]);
+  }, [orgId, from, to]);
 
   useEffect(() => {
     if (!orgId) return;
     void loadHours();
   }, [orgId]);
+
+  // A form left open from the previous day would submit against this one.
+  useEffect(() => setAction(null), [day]);
 
   /**
    * The bookable slots on the open day, asked of Postgres rather than derived from `hours`
@@ -148,28 +185,25 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     };
   }, [orgId, day, bookings]);
 
-  async function loadMonth(live: () => boolean = () => true) {
-    const from = `${month}-01`;
-    // Exclusive, so a booking at 23:30 on the last of the month is still inside it.
-    const to = `${shiftMonth(month, 1)}-01`;
-
+  async function loadRange(live: () => boolean = () => true) {
     const { data, error: readError } = await supabase
       .from("appointments")
       .select(BOOKING_COLUMNS)
       .eq("org_id", orgId)
       .gte("starts_at", istMidnight(from))
+      // Exclusive, so a booking at 23:30 on the last day of the span is still inside it.
       .lt("starts_at", istMidnight(to))
       // Cancelled rows are kept forever — they are the proof a customer was once told
       // they had this time — but a cancelled booking is a free slot everywhere else, and
       // this is the one screen where showing it would read as still taken.
       .neq("status", "cancelled")
       .order("starts_at", { ascending: true })
-      .limit(MONTH_LIMIT)
+      .limit(RANGE_LIMIT)
       .returns<Booking[]>();
 
     if (!live()) return;
-    // A failed read and an empty month look identical otherwise, and "no bookings" is not
-    // a claim to make when we do not know.
+    // A failed read and an empty span look identical otherwise, and "nothing booked" is
+    // not a claim to make when we do not know.
     setError(readError?.message ?? null);
     setBookings(data ?? []);
   }
@@ -194,7 +228,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       .eq("id", id);
     setBusy(false);
     if (writeError) return setError(writeError.message);
-    await loadMonth();
+    await loadRange();
   }
 
   /**
@@ -212,7 +246,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       .eq("kind", "block");
     setBusy(false);
     if (writeError) return setError(writeError.message);
-    await loadMonth();
+    await loadRange();
   }
 
   /**
@@ -237,21 +271,21 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       setError(writeError.message);
       return false;
     }
-    await loadMonth();
+    await loadRange();
     // Null is the "could not" answer, and it is not an error — the row already exists.
     return data !== null;
   }
 
   /** Returns how many slots were actually taken out, which is not always what was asked. */
-  async function blockOut(from: string, to: string, note: string): Promise<number> {
+  async function blockOut(fromTime: string, toTime: string, note: string): Promise<number> {
     setBusy(true);
     setError(null);
     const { data, error: writeError } = await supabase.rpc("block_time", {
       p_org_id: orgId,
       // The offset is in the string for the same reason as `istMidnight`: no arithmetic
       // happens on either side, so neither side can be wrong about it.
-      p_from: `${day}T${from}:00+05:30`,
-      p_to: `${day}T${to}:00+05:30`,
+      p_from: `${day}T${fromTime}:00+05:30`,
+      p_to: `${day}T${toTime}:00+05:30`,
       p_note: note.trim() || null,
     });
     setBusy(false);
@@ -259,7 +293,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       setError(writeError.message);
       return 0;
     }
-    await loadMonth();
+    await loadRange();
     return typeof data === "number" ? data : 0;
   }
 
@@ -280,7 +314,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       }
       await loadHours();
       // The hours decide which slots exist, so the calendar underneath them is now stale.
-      await loadMonth();
+      await loadRange();
     } catch (e) {
       setError(e instanceof Error ? e.message : "could not save the hours");
     } finally {
@@ -288,201 +322,387 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     }
   }
 
-  const byDay = new Map<string, Booking[]>();
-  for (const b of bookings ?? []) {
-    const day = istDay(b.starts_at);
-    byDay.set(day, [...(byDay.get(day) ?? []), b]);
+  /** Moves the span and the open day together, so the day pane never shows a date whose
+      rows were not fetched. Every date change in this screen goes through one of these
+      three, which is the only reason the single range fetch is safe. */
+  function go(delta: number) {
+    const next =
+      tab === "month" ? shiftMonth(anchor, delta) : shiftDay(anchor, delta * 7);
+    setAnchor(next);
+    setSelected(next);
   }
 
-  const first = `${month}-01`;
-  const lead = columnOf(first);
-  const cells = Array.from({ length: 42 }, (_, i) => shiftDay(first, i - lead));
+  function reset() {
+    setAnchor(today);
+    setSelected(null);
+  }
+
+  /** Switching the span cannot keep the old selection: a day picked in September is not in
+      the range "today", and the day pane would report it as empty rather than unfetched. */
+  function pickTab(next: Tab) {
+    setTab(next);
+    setAnchor(today);
+    setSelected(null);
+  }
+
+  /** The grid draws the days either side of the month, and picking one has to take the
+      month with it — otherwise the 31st of last month is open and unfetched. */
+  function pickCell(cell: string) {
+    if (monthOf(cell) !== monthOf(anchor)) setAnchor(cell);
+    setSelected(cell);
+  }
+
+  const byDay = new Map<string, Booking[]>();
+  for (const b of bookings ?? []) {
+    const on = istDay(b.starts_at);
+    byDay.set(on, [...(byDay.get(on) ?? []), b]);
+  }
+
+  const monthFirst = shiftMonth(anchor, 0);
+  const lead = columnOf(monthFirst);
+  const cells = Array.from({ length: 42 }, (_, i) => shiftDay(monthFirst, i - lead));
   const weeks = Array.from({ length: 6 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
 
   const onDay = byDay.get(day) ?? [];
   const blocksOnDay = onDay.filter((b) => b.kind === "block");
   const openDays = new Set((hours ?? []).map((h) => h.weekday));
+  const closedOnDay = hours !== null && !openDays.has(dayOfWeek(day));
+
+  const real = (bookings ?? []).filter((b) => b.kind !== "block");
+  const auto = real.filter((b) => b.conversation_id !== null).length;
+  // Not "this week": the span moves with Back and Next, and a heading that keeps saying
+  // "this week" over next month's rows is the kind of wrong nobody notices.
+  const span =
+    tab === "today" ? "today" : tab === "week" ? "in these seven days" : `in ${monthLabel(monthOf(anchor))}`;
+
+  const head =
+    bookings === null
+      ? "Loading…"
+      : `${real.length} ${real.length === 1 ? "booking" : "bookings"} ${span}`;
+  const sub =
+    bookings === null || real.length === 0
+      ? ""
+      : auto === 0
+        ? "None of them taken by the assistant."
+        : `${auto} of them taken by the assistant.`;
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
-      <header className="mb-5">
-        <h1 className="text-lg font-semibold">Diary</h1>
-        <p className="text-sm text-muted-foreground">
-          Every appointment the assistant took, and every one your team entered. All times
-          are IST.
-        </p>
-      </header>
+    <div className="flex h-full">
+      {/* One pane at a time on a phone, both side by side from `md`. */}
+      <aside
+        className={cn(
+          "w-full shrink-0 overflow-y-auto overscroll-contain border-border px-3 pb-8 md:w-[21rem] md:border-r",
+          selected && "hidden md:block",
+        )}
+      >
+        <header className="px-3 pb-4 pt-8">
+          <h1 className="text-[28px] font-semibold leading-none tracking-tight">Diary</h1>
+          <p className={cn("mt-3 text-[15px] font-medium", error && "text-destructive")}>{head}</p>
+          <p className="text-[15px] text-muted-foreground">{sub}</p>
+        </header>
 
-      {error && (
-        <p className="mb-4 rounded border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
-          {error}
-        </p>
-      )}
+        {/* Week is the default because the assistant only offers times a week ahead, so
+            three quarters of a month grid is cells it can never fill. */}
+        <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
+          <TabButton on={tab === "today"} onClick={() => pickTab("today")}>
+            Today
+          </TabButton>
+          <TabButton on={tab === "week"} onClick={() => pickTab("week")}>
+            Week
+          </TabButton>
+          <TabButton on={tab === "month"} onClick={() => pickTab("month")}>
+            Month
+          </TabButton>
+        </div>
 
-      {hours !== null && openDays.size === 0 && (
-        <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs">
-          No opening hours are set, so the assistant never offers a time and cannot book.
-          {isOwner ? " Set them below." : " Ask the account owner to set them."}
-        </p>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <section className="rounded border border-border p-4 lg:col-span-2">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">
-              {monthLabel(month)}
-            </span>
-            <span className="flex-1" />
-            <button
-              type="button"
-              onClick={() => setMonth((m) => shiftMonth(m, -1))}
-              className="rounded border border-border px-2 py-0.5 text-xs"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setMonth(monthOf(today))}
-              className="rounded border border-border px-2 py-0.5 text-xs"
-            >
-              Today
-            </button>
-            <button
-              type="button"
-              onClick={() => setMonth((m) => shiftMonth(m, 1))}
-              className="rounded border border-border px-2 py-0.5 text-xs"
-            >
-              Next
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-[10px] text-muted-foreground">
-            {COLUMNS.map((c) => (
-              <div key={c.dow} className="pb-1 text-center">
-                {c.label}
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-1">
-            {weeks.map((week) => (
-              <div key={week[0]} className="grid grid-cols-7 gap-1">
-                {week.map((cell) => {
-                  const n = (byDay.get(cell) ?? []).length;
-                  const outside = monthOf(cell) !== month;
-                  const closed = !openDays.has(dayOfWeek(cell));
-                  return (
-                    <button
-                      key={cell}
-                      type="button"
-                      onClick={() => setSelected(cell)}
-                      className={`flex h-14 flex-col items-center justify-center rounded border text-xs ${
-                        cell === day ? "border-foreground" : "border-border"
-                      } ${outside ? "opacity-35" : ""} ${
-                        closed && !outside ? "bg-muted/40" : ""
-                      }`}
-                    >
-                      <span className={cell === today ? "font-semibold underline" : ""}>
-                        {Number(cell.slice(8))}
-                      </span>
-                      {/* A count, not a stack of names. Thirty bookings on a Saturday
-                          would otherwise make the cell taller than the week. */}
-                      {n > 0 && (
-                        <span className="mt-0.5 rounded bg-foreground px-1.5 text-[10px] text-background">
-                          {n}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            Shaded days are days you are closed. The assistant offers no times on those.
+        {error && (
+          <p className="mx-3 mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+            {error}
           </p>
-        </section>
+        )}
 
-        <section className="rounded border border-border p-4">
-          <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-            {day === today ? "Today" : dayHeading(day)}
+        {hours !== null && openDays.size === 0 && (
+          <p className="mx-3 mb-4 rounded-lg bg-amber-500/10 px-3 py-2 text-[13px]">
+            No opening hours are set, so the assistant never offers a time and cannot book.
+            {isOwner ? " Open a day and set them at the bottom." : " Ask the account owner to set them."}
+          </p>
+        )}
+
+        {tab !== "today" && (
+          <div className="mb-3 flex items-center gap-2 px-3">
+            <span className="mr-auto text-[13px] text-muted-foreground">
+              {tab === "month" ? monthLabel(monthOf(anchor)) : `${dayHeading(from)} — ${dayHeading(shiftDay(to, -1))}`}
+            </span>
+            <Step onClick={() => go(-1)}>Back</Step>
+            <Step onClick={reset}>Today</Step>
+            <Step onClick={() => go(1)}>Next</Step>
           </div>
+        )}
 
-          {bookings === null ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : onDay.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Nothing booked.</p>
-          ) : (
-            <ul className="space-y-2">
-              {onDay.map((b) => (
-                <li
-                  key={b.id}
-                  className={`rounded border p-2 text-xs ${
-                    b.kind === "block" ? "border-dashed border-border bg-muted/40" : "border-border"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium tabular-nums">{istTime(b.starts_at)}</span>
-                    <span className="text-muted-foreground">{b.duration_minutes} min</span>
-                    <span className="flex-1" />
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
-                      className="text-destructive disabled:opacity-50"
-                    >
-                      {b.kind === "block" ? "Unblock" : "Cancel"}
-                    </button>
-                  </div>
-                  <div className="mt-0.5 truncate">{who(b)}</div>
-                </li>
+        {tab === "month" ? (
+          <div className="px-2">
+            <div className="grid grid-cols-7 gap-1 pb-1 text-center text-[11px] text-muted-foreground">
+              {COLUMNS.map((c) => (
+                <div key={c.dow}>{c.label}</div>
               ))}
-            </ul>
-          )}
-
-          {/* One click for the common case. Blocking an afternoon makes eight rows, and
-              clearing them one at a time is eight confirmations of the same decision. */}
-          {blocksOnDay.length > 1 && (
-            <button
-              type="button"
-              disabled={busy}
-              className="mt-2 text-xs text-destructive disabled:opacity-50"
-              onClick={() => void unblock(blocksOnDay.map((b) => b.id))}
-            >
-              Unblock all {blocksOnDay.length} on this day
-            </button>
-          )}
-
-          <div className="mt-4 border-t border-border pt-3">
-            <BookingForm key={`book-${day}`} slots={slots} busy={busy} onBook={bookManual} />
-          </div>
-
-          <div className="mt-4 border-t border-border pt-3">
-            <BlockEditor
-              key={day}
-              hours={hours?.find((h) => h.weekday === dayOfWeek(day)) ?? null}
-              busy={busy}
-              onBlock={blockOut}
-            />
-          </div>
-
-          <div className="mt-4 border-t border-border pt-3">
-            <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
-              Coming up
             </div>
-            <ComingUp bookings={bookings} today={today} onPick={setSelected} />
+            <div className="space-y-1">
+              {weeks.map((week) => (
+                <div key={week[0]} className="grid grid-cols-7 gap-1">
+                  {week.map((cell) => {
+                    const n = (byDay.get(cell) ?? []).length;
+                    const outside = monthOf(cell) !== monthOf(anchor);
+                    const closed = !openDays.has(dayOfWeek(cell));
+                    return (
+                      <button
+                        key={cell}
+                        type="button"
+                        onClick={() => pickCell(cell)}
+                        className={cn(
+                          "flex h-11 flex-col items-center justify-center rounded-lg text-[13px] outline-none",
+                          cell === day ? "bg-foreground text-background" : "hover:bg-black/[0.04]",
+                          closed && cell !== day && "bg-black/[0.03]",
+                          outside && "opacity-30",
+                        )}
+                      >
+                        <span className={cn("tabular-nums", cell === today && "font-semibold")}>
+                          {Number(cell.slice(8))}
+                        </span>
+                        {/* A count, not a stack of names. Thirty bookings on a Saturday
+                            would otherwise make the cell taller than the week. */}
+                        {n > 0 && (
+                          <span
+                            className={cn(
+                              "mt-0.5 h-1 w-1 rounded-full",
+                              cell === day ? "bg-background" : "bg-foreground",
+                            )}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+            <p className="px-1 pt-3 text-[13px] text-muted-foreground">
+              Shaded days are days you are closed. The assistant offers no times on those.
+            </p>
           </div>
-        </section>
-      </div>
+        ) : bookings === null ? (
+          <Empty>Loading…</Empty>
+        ) : (
+          days.map((d) => {
+            const list = byDay.get(d) ?? [];
+            const closed = hours !== null && !openDays.has(dayOfWeek(d));
+            return (
+              <Group
+                key={d}
+                title={d === today ? "Today" : dayHeading(d)}
+                right={
+                  <button
+                    type="button"
+                    onClick={() => setSelected(d)}
+                    className={cn("text-[13px]", d === day ? "text-muted-foreground" : "text-blue-600")}
+                  >
+                    {list.length > 0 && <Count>{list.length} · </Count>}
+                    Open
+                  </button>
+                }
+              >
+                {list.length === 0 ? (
+                  <Empty>{closed ? "Closed." : "Nothing booked."}</Empty>
+                ) : (
+                  list.map((b) => (
+                    <BookingRow key={b.id} b={b} active={d === day} onPick={() => setSelected(d)} />
+                  ))
+                )}
+              </Group>
+            );
+          })
+        )}
+      </aside>
 
-      {isOwner && (
-        <section className="mt-4 rounded border border-border p-4">
-          <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-            Opening hours
+      <div
+        className={cn(
+          "min-w-0 flex-1 overflow-y-auto overscroll-contain",
+          !selected && "hidden md:block",
+        )}
+      >
+        <div className="max-w-2xl px-6 py-8 sm:px-10 sm:py-10">
+          <button
+            type="button"
+            onClick={() => setSelected(null)}
+            className="mb-4 text-[13px] text-blue-600 md:hidden"
+          >
+            ← Back
+          </button>
+
+          <h2 className="text-[22px] font-semibold tracking-tight">
+            {day === today ? "Today" : dayHeading(day)}
+          </h2>
+          <p className="mt-1 text-[15px] text-muted-foreground">
+            {closedOnDay
+              ? "You are closed. The assistant offers no times."
+              : slots === null
+                ? "\u00a0"
+                : `${onDay.filter((b) => b.kind !== "block").length} booked · ${slots.length} still free`}
+          </p>
+
+          <div className="mt-7">
+            {bookings === null ? (
+              <Empty>Loading…</Empty>
+            ) : onDay.length === 0 ? (
+              <Empty>Nothing booked on this day.</Empty>
+            ) : (
+              onDay.map((b) => (
+                <BookingRow
+                  key={b.id}
+                  b={b}
+                  busy={busy}
+                  onCancel={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
+                />
+              ))
+            )}
+
+            {/* One click for the common case. Blocking an afternoon makes eight rows, and
+                clearing them one at a time is eight confirmations of the same decision. */}
+            {blocksOnDay.length > 1 && (
+              <button
+                type="button"
+                disabled={busy}
+                className="mt-2 px-3 text-[13px] text-destructive disabled:opacity-50"
+                onClick={() => void unblock(blocksOnDay.map((b) => b.id))}
+              >
+                Unblock all {blocksOnDay.length} on this day
+              </button>
+            )}
           </div>
-          <HoursEditor hours={hours} busy={busy} onSave={saveHours} />
-        </section>
+
+          {/* Both forms were permanently open in the rail before this, which is why the
+              settings below them read as part of the day's work. Asked for, then shown. */}
+          <div className="mt-8 flex gap-1">
+            <TabButton
+              on={action === "book"}
+              onClick={() => setAction((a) => (a === "book" ? null : "book"))}
+            >
+              Add a booking
+            </TabButton>
+            <TabButton
+              on={action === "block"}
+              onClick={() => setAction((a) => (a === "block" ? null : "block"))}
+            >
+              Block out time
+            </TabButton>
+          </div>
+
+          {action === "book" && (
+            <div className="mt-4">
+              <BookingForm key={`book-${day}`} slots={slots} busy={busy} onBook={bookManual} />
+            </div>
+          )}
+
+          {action === "block" && (
+            <div className="mt-4">
+              <BlockEditor
+                key={day}
+                hours={hours?.find((h) => h.weekday === dayOfWeek(day)) ?? null}
+                busy={busy}
+                onBlock={blockOut}
+              />
+            </div>
+          )}
+
+          {/* Collapsed, and last. It is edited when the business changes its hours and
+              never again, so it has no business sitting level with this afternoon. */}
+          {isOwner && (
+            <details className="mt-10 border-t border-border pt-5">
+              <summary className="cursor-pointer list-none text-[13px] text-muted-foreground marker:content-none">
+                <span className="mr-1 inline-block text-[10px]">▸</span>
+                Opening hours
+              </summary>
+              <div className="mt-4">
+                <HoursEditor hours={hours} busy={busy} onSave={saveHours} />
+              </div>
+            </details>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Step({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-md px-2 py-0.5 text-[13px] text-muted-foreground outline-none hover:bg-black/[0.04]"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * One appointment, in the desk's row shape. A block is dimmed rather than boxed: it is
+ * the absence of an appointment, and drawing it as loudly as a customer made a blocked
+ * afternoon look like eight bookings.
+ */
+function BookingRow({
+  b,
+  active,
+  busy,
+  onPick,
+  onCancel,
+}: {
+  b: Booking;
+  active?: boolean;
+  busy?: boolean;
+  onPick?: () => void;
+  onCancel?: () => void;
+}) {
+  const block = b.kind === "block";
+  const line = (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className={cn("truncate text-[15px]", block ? "text-muted-foreground" : "font-medium")}>
+        {who(b)}
+      </span>
+      <span className="shrink-0 text-[13px] tabular-nums text-muted-foreground">
+        {istTime(b.starts_at)}
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg px-3 py-2.5",
+        active ? "bg-black/[0.03]" : onPick && "hover:bg-black/[0.03]",
+      )}
+    >
+      {/* A plain div where the row is not a link: a disabled button greys its own text in
+          Chrome, which made a booking read as cancelled. */}
+      {onPick ? (
+        <button type="button" onClick={onPick} className="block w-full text-left outline-none">
+          {line}
+        </button>
+      ) : (
+        line
+      )}
+
+      {onCancel && (
+        <div className="mt-0.5 flex items-baseline gap-3 text-[13px] text-muted-foreground">
+          <span className="tabular-nums">{b.duration_minutes} min</span>
+          {b.conversation_id && !block && <span>booked on WhatsApp</span>}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCancel}
+            className="ml-auto text-destructive disabled:opacity-50"
+          >
+            {block ? "Unblock" : "Cancel"}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -514,7 +734,7 @@ function BookingForm({
 
   const chosen = at || slots?.[0]?.starts_at || "";
 
-  if (slots === null) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  if (slots === null) return <Empty>Loading…</Empty>;
 
   async function submit() {
     const ok = await onBook(chosen, name, service);
@@ -526,69 +746,58 @@ function BookingForm({
     }
   }
 
-  return (
-    <div className="space-y-2 text-xs">
-      <div className="uppercase tracking-wide text-muted-foreground">Add a booking</div>
+  if (slots.length === 0) {
+    return <Empty>No free times on this day — everything is booked, blocked, or you are closed.</Empty>;
+  }
 
-      {slots.length === 0 ? (
-        <p className="text-muted-foreground">
-          No free times on this day — everything is booked, blocked, or you are closed.
+  return (
+    <div className="space-y-2 px-3">
+      <div className="flex items-center gap-2">
+        <select
+          value={chosen}
+          onChange={(e) => {
+            setAt(e.target.value);
+            setLost(false);
+          }}
+          className={FIELD}
+        >
+          {slots.map((s) => (
+            <option key={s.starts_at} value={s.starts_at}>
+              {istTime(s.starts_at)}
+            </option>
+          ))}
+        </select>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name"
+          className={cn(FIELD, "flex-1")}
+        />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          value={service}
+          onChange={(e) => setService(e.target.value)}
+          placeholder="What for (optional)"
+          className={cn(FIELD, "flex-1")}
+        />
+        <button type="button" disabled={busy} onClick={() => void submit()} className={GO}>
+          Book
+        </button>
+      </div>
+
+      {lost ? (
+        // Said plainly rather than as an error: nothing went wrong, somebody was just
+        // quicker, and the staff member has to know not to expect this person.
+        <p className="text-[13px] text-destructive">
+          That time went while you were typing. Nothing was booked — pick another.
         </p>
       ) : (
-        <>
-          <div className="flex items-center gap-1.5">
-            <select
-              value={chosen}
-              onChange={(e) => {
-                setAt(e.target.value);
-                setLost(false);
-              }}
-              className="rounded border border-border bg-transparent px-1 py-0.5"
-            >
-              {slots.map((s) => (
-                <option key={s.starts_at} value={s.starts_at}>
-                  {istTime(s.starts_at)}
-                </option>
-              ))}
-            </select>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Name"
-              className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
-            />
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <input
-              value={service}
-              onChange={(e) => setService(e.target.value)}
-              placeholder="What for (optional)"
-              className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void submit()}
-              className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
-            >
-              Book
-            </button>
-          </div>
-
-          {lost ? (
-            // Said plainly rather than as an error: nothing went wrong, somebody was just
-            // quicker, and the staff member has to know not to expect this person.
-            <p className="text-destructive">
-              That time went while you were typing. Nothing was booked — pick another.
-            </p>
-          ) : (
-            <p className="text-muted-foreground">
-              For someone who phoned or was handed over. The assistant stops offering the
-              time immediately.
-            </p>
-          )}
-        </>
+        <p className="text-[13px] text-muted-foreground">
+          For someone who phoned or was handed over. The assistant stops offering the time
+          immediately.
+        </p>
       )}
     </div>
   );
@@ -622,10 +831,10 @@ function BlockEditor({
 
   if (!hours) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <Empty>
         You are closed on this day, so the assistant already offers no times. Nothing to
         block.
-      </p>
+      </Empty>
     );
   }
 
@@ -638,10 +847,8 @@ function BlockEditor({
   }
 
   return (
-    <div className="space-y-2 text-xs">
-      <div className="uppercase tracking-wide text-muted-foreground">Block out time</div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
+    <div className="space-y-2 px-3">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           type="time"
           value={from}
@@ -649,9 +856,9 @@ function BlockEditor({
             setFrom(e.target.value);
             setResult(null);
           }}
-          className="rounded border border-border bg-transparent px-1 py-0.5"
+          className={FIELD}
         />
-        <span className="text-muted-foreground">–</span>
+        <span className="text-[13px] text-muted-foreground">–</span>
         <input
           type="time"
           value={to}
@@ -659,9 +866,7 @@ function BlockEditor({
             setTo(e.target.value);
             setResult(null);
           }}
-          className={`rounded border bg-transparent px-1 py-0.5 ${
-            backwards ? "border-destructive" : "border-border"
-          }`}
+          className={cn(FIELD, backwards && "border-destructive")}
         />
         <button
           type="button"
@@ -670,112 +875,49 @@ function BlockEditor({
             setTo(close);
             setResult(null);
           }}
-          className="rounded border border-border px-2 py-0.5"
+          className="rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-black/[0.04]"
         >
           Whole day
         </button>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Reason (optional)"
-          className="min-w-0 flex-1 rounded border border-border bg-transparent px-1 py-0.5"
+          className={cn(FIELD, "flex-1")}
         />
         <button
           type="button"
           disabled={busy || backwards}
           onClick={() => void submit()}
-          className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
+          className={GO}
         >
           Block
         </button>
       </div>
 
       {backwards ? (
-        <p className="text-destructive">The end has to be after the start.</p>
+        <p className="text-[13px] text-destructive">The end has to be after the start.</p>
       ) : result === null ? (
-        <p className="text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           The assistant stops offering these times and cannot book them.
         </p>
       ) : result === 0 ? (
         // Genuinely different from a failure, and the owner has to be able to tell: the
         // usual cause is every slot in the range already being taken.
-        <p className="text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Nothing was blocked — those times were already taken or outside your hours.
           Existing bookings are never removed by this.
         </p>
       ) : (
-        <p className="text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Blocked {result} slot{result === 1 ? "" : "s"}. Any booking already in that range
           was left alone — cancel those yourself if you need to.
         </p>
       )}
     </div>
-  );
-}
-
-function dayHeading(day: string): string {
-  const [y, m, d] = day.split("-").map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d!)).toLocaleDateString("en-IN", {
-    timeZone: "UTC",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
-}
-
-/**
- * The next few appointments, from a month already in memory.
- *
- * It takes rows rather than fetching them so that the calendar beside it and this list can
- * never disagree, and so that opening the tab is one query rather than two.
- */
-function ComingUp({
-  bookings,
-  today,
-  onPick,
-}: {
-  bookings: Booking[] | null;
-  today: string;
-  onPick: (day: string) => void;
-}) {
-  const now = Date.now();
-  const next = (bookings ?? [])
-    .filter((b) => new Date(b.starts_at).getTime() >= now)
-    .slice(0, COMING_UP_LIMIT);
-
-  if (bookings === null) return <p className="text-xs text-muted-foreground">Loading…</p>;
-  if (next.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Nothing left this month. Use Next to look further ahead.
-      </p>
-    );
-  }
-
-  return (
-    <ul className="space-y-1 text-xs">
-      {next.map((b) => {
-        const day = istDay(b.starts_at);
-        return (
-          <li key={b.id}>
-            <button
-              type="button"
-              onClick={() => onPick(day)}
-              className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-muted/50"
-            >
-              <span className="w-20 shrink-0 text-muted-foreground">
-                {day === today ? "Today" : dayHeading(day)}
-              </span>
-              <span className="w-16 shrink-0 tabular-nums">{istTime(b.starts_at)}</span>
-              <span className="flex-1 truncate">{who(b)}</span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
@@ -850,7 +992,7 @@ export function HoursEditor({
   const broken = open.some(({ day }) => week[day]!.closes_at <= week[day]!.opens_at);
 
   return (
-    <div className="space-y-2 text-xs">
+    <div className="space-y-2 text-[13px]">
       <div className="flex items-center gap-2">
         <select
           value={slot}
@@ -858,7 +1000,7 @@ export function HoursEditor({
             setSlot(Number(e.target.value));
             setDirty(true);
           }}
-          className="rounded border border-border bg-transparent px-1 py-0.5"
+          className={FIELD}
         >
           {[15, 20, 30, 45, 60].map((m) => (
             <option key={m} value={m}>
@@ -878,7 +1020,7 @@ export function HoursEditor({
               }),
             )
           }
-          className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
+          className={GO}
         >
           Save
         </button>
@@ -904,16 +1046,14 @@ export function HoursEditor({
                   type="time"
                   value={row.opens_at}
                   onChange={(e) => edit(day, "opens_at", e.target.value)}
-                  className="rounded border border-border bg-transparent px-1 py-0.5"
+                  className={FIELD}
                 />
                 <span className="text-muted-foreground">–</span>
                 <input
                   type="time"
                   value={row.closes_at}
                   onChange={(e) => edit(day, "closes_at", e.target.value)}
-                  className={`rounded border bg-transparent px-1 py-0.5 ${
-                    row.closes_at <= row.opens_at ? "border-destructive" : "border-border"
-                  }`}
+                  className={cn(FIELD, row.closes_at <= row.opens_at && "border-destructive")}
                 />
               </>
             ) : (
@@ -928,69 +1068,3 @@ export function HoursEditor({
   );
 }
 
-/**
- * The forward half of Flowin, which is otherwise entirely a retrospective.
- *
- * Its own small query rather than the Diary's month: this is the landing screen, it must
- * paint without waiting on a calendar, and "the next few" crosses a month boundary that a
- * month fetch by definition does not.
- */
-export function UpcomingCard({ orgId, onOpen }: { orgId: string; onOpen: () => void }) {
-  const [next, setNext] = useState<Booking[] | null>(null);
-
-  useEffect(() => {
-    if (!orgId) return;
-    let live = true;
-    void supabase
-      .from("appointments")
-      .select(BOOKING_COLUMNS)
-      .eq("org_id", orgId)
-      .gte("starts_at", new Date().toISOString())
-      .neq("status", "cancelled")
-      .order("starts_at", { ascending: true })
-      .limit(COMING_UP_LIMIT)
-      .returns<Booking[]>()
-      .then(({ data }) => live && setNext(data ?? []));
-    return () => {
-      live = false;
-    };
-  }, [orgId]);
-
-  const today = istToday();
-
-  return (
-    <section className="rounded border border-border p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-xs uppercase tracking-wide text-muted-foreground">Coming up</span>
-        <span className="flex-1" />
-        <button type="button" onClick={onOpen} className="rounded border border-border px-2 py-0.5 text-xs">
-          Open the diary
-        </button>
-      </div>
-
-      {next === null ? (
-        <p className="text-xs text-muted-foreground">Loading…</p>
-      ) : next.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Nothing booked yet. The assistant offers times whenever your opening hours are
-          set.
-        </p>
-      ) : (
-        <ul className="space-y-1 text-xs">
-          {next.map((b) => {
-            const day = istDay(b.starts_at);
-            return (
-              <li key={b.id} className="flex items-center gap-2">
-                <span className="w-20 shrink-0 text-muted-foreground">
-                  {day === today ? "Today" : dayHeading(day)}
-                </span>
-                <span className="w-16 shrink-0 tabular-nums">{istTime(b.starts_at)}</span>
-                <span className="flex-1 truncate">{who(b)}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}

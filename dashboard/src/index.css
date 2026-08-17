@@ -19,11 +19,10 @@ body {
 }
 
 /* No blue box on anything that was clicked.
-   Three separate things produce one: the browser's focus ring on an element that only
-   has focus because a mouse or a thumb put it there, Safari and Chrome's grey tap
-   flash on mobile, and recharts, which makes its own chart wrapper focusable. Keyboard
-   focus is untouched — `:focus-visible` still rings, so tabbing through the form is
-   still possible to follow. */
+   Two things produce one: the browser's focus ring on an element that only has focus
+   because a mouse or a thumb put it there, and Safari and Chrome's grey tap flash on
+   mobile. Keyboard focus is untouched — `:focus-visible` still rings, so tabbing through
+   the form is still possible to follow. */
 :focus:not(:focus-visible) {
   outline: none;
 }
@@ -45,10 +44,4 @@ html {
 html,
 body {
   overscroll-behavior: none;
-}
-
-.recharts-wrapper,
-.recharts-wrapper *:focus,
-.recharts-surface {
-  outline: none !important;
 }

@@ -8,6 +8,7 @@ import {
   type SafetyFlag,
 } from "./lib/supabase";
 import { Button } from "./components/ui/button";
+import { Count, Empty, Group, Stat, TabButton } from "./components/screen";
 import { cn, ist, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
 import { downloadLeadsCsv, leadsFor } from "./lib/leads";
 import Thread from "./Thread";
@@ -517,57 +518,6 @@ function sentence(day: DayStats): string {
   return `${speed}, and ${day.afterHours} ${
     day.afterHours === 1 ? "answer went out" : "answers went out"
   } after you had closed for the day.`;
-}
-
-function TabButton({
-  on,
-  dot,
-  onClick,
-  children,
-}: {
-  on: boolean;
-  dot?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] outline-none",
-        on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-black/[0.04]",
-      )}
-    >
-      {children}
-      {dot && <span className="h-1.5 w-1.5 rounded-full bg-destructive" />}
-    </button>
-  );
-}
-
-function Count({ children }: { children: React.ReactNode }) {
-  return <span className="tabular-nums opacity-60">{children}</span>;
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="px-3 pt-2 text-[13px] text-muted-foreground">{children}</p>;
-}
-
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="mb-5">
-      <h2 className="px-3 pb-1.5 text-[13px] text-muted-foreground">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Stat({ n, label }: { n: string; label: string }) {
-  return (
-    <div>
-      <div className="text-[38px] font-semibold leading-none tracking-tight tabular-nums">{n}</div>
-      <div className="mt-2 text-[13px] text-muted-foreground">{label}</div>
-    </div>
-  );
 }
 
 function Row({
