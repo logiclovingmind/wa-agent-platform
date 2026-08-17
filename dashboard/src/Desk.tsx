@@ -12,6 +12,7 @@ import { cn, ist, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
 import { downloadLeadsCsv, leadsFor } from "./lib/leads";
 import Thread from "./Thread";
 
+/** The "All" tab only. The queue is not built from this list — see `desk_queue`. */
 const LIST_LIMIT = 50;
 
 /** A callback nobody made in a week is not today's work. It stays reachable, but it
@@ -21,19 +22,20 @@ const COLD_MS = 7 * 24 * 60 * 60 * 1000;
 const istMidnight = (day: string) => `${day}T00:00:00+05:30`;
 
 /**
- * Why a conversation is waiting on a person, or null if it is not. Ordered: a safety
- * flag outranks everything, then a customer who asked for a human, then one the owner
- * already took over and has not handed back.
+ * A row of the queue as Postgres ranked it (migration 0036). The ranking used to be done
+ * here, over the fifty most recent conversations, which meant a callback owed from last
+ * week did not exist as far as this screen was concerned.
  */
-const ATTENTION = [
-  { rank: 0, label: "flagged", match: (_c: Conversation, f: SafetyFlag[]) => f.length > 0 },
-  { rank: 1, label: "asked for a person", match: (c: Conversation) => c.handoff_state === "requested" },
-  { rank: 2, label: "you are replying", match: (c: Conversation) => c.handoff_state === "human" },
-] as const;
-
-function attention(c: Conversation, f: SafetyFlag[]) {
-  return ATTENTION.find((a) => a.match(c, f)) ?? null;
+interface QueueRow extends Conversation {
+  /** "flagged" | "asked for a person" | "you are replying" | "never called back" */
+  reason: string;
+  /** 0–2 are waiting on a person, 3 is a callback owed. */
+  rank: number;
+  flag_kinds: SafetyFlag["kind"][];
+  intent: string | null;
 }
+
+type Tab = "today" | "waiting" | "flagged" | "all";
 
 interface DayStats {
   conversations: number;
@@ -51,10 +53,6 @@ interface DayStats {
  * who is waiting, who is owed a call — and when there are none it gets out of the way
  * and shows what the assistant did instead.
  *
- * The filter chips this replaced ("Needs you / To call / All") asked the owner to
- * choose a view before the screen would answer anything. The groups below answer it
- * without being asked, in the order the day should be worked.
- *
  * Almost nothing here is boxed or ruled. Hierarchy comes from type size and white space,
  * because a border around every group is what made the old screen read as cluttered when
  * the number of things on it had not actually changed.
@@ -70,6 +68,7 @@ export default function Desk({
   jumpTo: string | null;
   onWaiting?: (n: number) => void;
 }) {
+  const [queue, setQueue] = useState<QueueRow[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [flags, setFlags] = useState<Map<string, SafetyFlag[]>>(new Map());
   const [leads, setLeads] = useState<Map<string, Lead>>(new Map());
@@ -77,11 +76,12 @@ export default function Desk({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<{ bad: boolean; text: string } | null>(null);
-  // "today" is the exception queue; "all" is every conversation, newest first. A mode
-  // rather than a filter chip: the chips were three views none of which was the answer
-  // to "what do I do this morning", and this way the default screen never has to be
-  // chosen at all.
-  const [mode, setMode] = useState<"today" | "all">("today");
+  // One list, sorted four ways, rather than a red slab shouting over the top of it. The
+  // flag used to be a full-bleed scarlet banner: impossible to miss on the first morning
+  // and impossible to get rid of on the fifth, which is how an alert becomes wallpaper.
+  // As a tab it keeps a red dot — present but not shouting — and the warning appears
+  // when the owner goes to read it.
+  const [tab, setTab] = useState<Tab>("today");
   const [showCold, setShowCold] = useState(false);
   const [day, setDay] = useState<DayStats>({
     conversations: 0,
@@ -95,15 +95,21 @@ export default function Desk({
   useNow();
 
   useEffect(() => {
-    void load();
-  }, []);
-
-  useEffect(() => {
     if (!orgId) return;
+    void load();
     void loadDay(orgId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   async function load() {
+    // The queue itself, ranked and ordered in Postgres across every conversation the org
+    // has. Doing this in the browser meant it was only ever true about the fifty rows
+    // below, and on this screen a missing row reads as "nothing to do".
+    const { data: queueData, error: queueError } = await supabase.rpc("desk_queue", {
+      p_org_id: orgId,
+    });
+    const rows = (queueData ?? []) as QueueRow[];
+
     const { data, error } = await supabase
       .from("conversations")
       .select(
@@ -117,7 +123,8 @@ export default function Desk({
     // a column this build expects but the database does not have renders as "nothing
     // here", which on this screen reads as "you're clear" — a worse lie than a blank
     // list, because it is an instruction to stop looking.
-    setLoadError(error ? error.message : null);
+    setLoadError(queueError?.message ?? error?.message ?? null);
+    setQueue(rows);
     setConversations(data ?? []);
 
     const { data: open } = await supabase
@@ -133,9 +140,11 @@ export default function Desk({
     }
     setFlags(byConversation);
 
-    // Only for the rows on screen. Reading every lead to label fifty conversations is
-    // the kind of query the egress budget dies to.
-    setLeads(await leadsFor((data ?? []).map((c) => c.id)));
+    // Only for the rows that can be opened from here. The queue carries its own intent,
+    // so this is for the thread panel — the detail, the "mark called back" action — and
+    // not for the list.
+    const ids = new Set([...rows.map((r) => r.id), ...(data ?? []).map((c) => c.id)]);
+    setLeads(await leadsFor([...ids]));
   }
 
   /** Today only. Counted in Postgres for the same reason Flowin's numbers are. */
@@ -172,7 +181,7 @@ export default function Desk({
   useEffect(() => {
     if (!jumpTo) return;
     setOpenId(jumpTo);
-    if (conversations.some((c) => c.id === jumpTo)) return;
+    if (conversations.some((c) => c.id === jumpTo) || queue.some((c) => c.id === jumpTo)) return;
 
     void (async () => {
       const { data } = await supabase
@@ -190,12 +199,8 @@ export default function Desk({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpTo]);
 
-  const open = conversations.find((c) => c.id === openId) ?? null;
-
-  /** Somebody asked for something and nobody has called them back. */
-  function owed(c: Conversation): boolean {
-    return leads.has(c.id) && c.followed_up_at === null;
-  }
+  const open =
+    queue.find((c) => c.id === openId) ?? conversations.find((c) => c.id === openId) ?? null;
 
   function cold(c: Conversation): boolean {
     const at = c.last_message_at ? Date.parse(c.last_message_at) : 0;
@@ -205,54 +210,52 @@ export default function Desk({
   const byRecency = (a: Conversation, b: Conversation) =>
     (b.last_message_at ?? "").localeCompare(a.last_message_at ?? "");
 
-  // Sorted by how long is left to reply, not by who spoke last. Meta closes the free
-  // window 24h after the customer's last message; after that the only way to answer is
-  // a paid template the client has to have approved in advance. So the conversation
-  // about to close outranks the one that arrived most recently, which is the opposite
-  // of what a chat app does — and the reason this is not a chat app.
-  const waiting = conversations
-    .filter((c) => attention(c, flags.get(c.id) ?? []))
-    .sort((a, b) => {
-      const ra = attention(a, flags.get(a.id) ?? [])!.rank;
-      const rb = attention(b, flags.get(b.id) ?? [])!.rank;
-      if (ra !== rb) return ra - rb;
-      return (a.window_expires_at ?? "9999").localeCompare(b.window_expires_at ?? "9999");
-    });
-
-  const waitingIds = new Set(waiting.map((c) => c.id));
-  const callable = conversations.filter((c) => owed(c) && !waitingIds.has(c.id));
-  const callToday = callable.filter((c) => !cold(c)).sort(byRecency);
-  const callCold = callable.filter(cold).sort(byRecency);
-
-  const queued = new Set([...waitingIds, ...callable.map((c) => c.id)]);
+  // Already ordered by rank, then by how long is left to reply. Meta closes the free
+  // window 24h after the customer's last message; after that the only way to answer is a
+  // paid template the client has to have approved in advance. So the conversation about
+  // to close outranks the one that arrived most recently, which is the opposite of what a
+  // chat app does — and the reason this is not a chat app.
+  const waiting = queue.filter((r) => r.rank < 3);
+  const flagged = queue.filter((r) => r.flag_kinds.length > 0);
+  const callable = queue.filter((r) => r.rank === 3);
+  const callToday = callable.filter((c) => !cold(c));
+  const callCold = callable.filter(cold);
+  const everything = [...conversations].sort(byRecency);
+  const queued = new Set(queue.map((r) => r.id));
 
   useEffect(() => {
     onWaiting?.(waiting.length);
   }, [waiting.length, onWaiting]);
 
-  // What j/k walk, in the order they are painted. Collapsed groups are not in it,
-  // because arrowing into something invisible is how a keyboard shortcut loses trust.
-  const everything = [...conversations].sort(byRecency);
-  const visible =
-    mode === "all"
+  // What the arrow keys walk, in the order they are painted. Collapsed groups are not in
+  // it, because arrowing into something invisible is how a keyboard shortcut loses trust.
+  const visible: Conversation[] =
+    tab === "all"
       ? everything
-      : [...waiting, ...callToday, ...(showCold ? callCold : [])];
+      : tab === "waiting"
+        ? waiting
+        : tab === "flagged"
+          ? flagged
+          : [...waiting, ...callToday, ...(showCold ? callCold : [])];
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const el = e.target as HTMLElement | null;
-      // Never steal a keystroke from the reply box. "j" is a letter before it is a
-      // shortcut.
+      // Never steal a keystroke from the reply box.
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const rows = visibleRef.current;
-      if (e.key === "j" || e.key === "k") {
+      // Arrow keys, not j/k. j/k is a habit from one text editor, and half the people
+      // who will ever use this are on Windows and have never met it.
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (rows.length === 0) return;
         e.preventDefault();
-        setCursor((i) => Math.max(0, Math.min(rows.length - 1, e.key === "j" ? i + 1 : i - 1)));
+        setCursor((i) =>
+          Math.max(0, Math.min(rows.length - 1, e.key === "ArrowDown" ? i + 1 : i - 1)),
+        );
       } else if (e.key === "Enter") {
         const row = rows[cursor];
         if (row) {
@@ -284,8 +287,6 @@ export default function Desk({
     setExporting(false);
   }
 
-  const flagged = waiting.filter((c) => (flags.get(c.id)?.length ?? 0) > 0);
-
   // Two lines, not one: the first says what state the day is in, the second says what
   // that means for the person reading. "All clear." on its own invites a second look to
   // check it really means nothing.
@@ -311,7 +312,7 @@ export default function Desk({
   }
 
   function rowFor(c: Conversation, opts: { callable?: boolean; deadline?: boolean; dim?: boolean }) {
-    const reason = attention(c, flags.get(c.id) ?? [])?.label;
+    const row = c as Partial<QueueRow>;
     const left = windowLeft(c.window_expires_at);
     return (
       <Row
@@ -319,10 +320,10 @@ export default function Desk({
         c={c}
         // The intent is what the owner is scanning for; the reason the assistant stopped
         // is the fallback, not a second label competing with it on the same row.
-        sub={leads.get(c.id)?.intent ?? reason ?? null}
+        sub={leads.get(c.id)?.intent ?? row.intent ?? row.reason ?? null}
         right={opts.deadline && left ? left.text : ist(c.last_message_at)}
         urgent={Boolean(opts.deadline && left?.urgent)}
-        flags={flags.get(c.id) ?? []}
+        kinds={row.flag_kinds ?? (flags.get(c.id) ?? []).map((f) => f.kind)}
         callable={opts.callable ?? false}
         dim={opts.dim ?? false}
         active={c.id === openId}
@@ -341,32 +342,30 @@ export default function Desk({
           open && "hidden md:block",
         )}
       >
-        <header className="px-3 pb-5 pt-8">
-          {mode === "all" ? (
-            <>
-              <button
-                onClick={() => setMode("today")}
-                className="mb-2 text-[13px] text-blue-600"
-              >
-                ← Today
-              </button>
-              <h1 className="text-[28px] font-semibold leading-none tracking-tight">
-                All conversations
-              </h1>
-              <p className="mt-3 text-[15px] text-muted-foreground">
-                The {conversations.length} most recent, newest first.
-              </p>
-            </>
-          ) : (
-            <>
-              <h1 className="text-[28px] font-semibold leading-none tracking-tight">Today</h1>
-              <p className={cn("mt-3 text-[15px] font-medium", loadError && "text-destructive")}>
-                {head}
-              </p>
-              <p className="text-[15px] text-muted-foreground">{sub}</p>
-            </>
-          )}
+        <header className="px-3 pb-4 pt-8">
+          <h1 className="text-[28px] font-semibold leading-none tracking-tight">Today</h1>
+          <p className={cn("mt-3 text-[15px] font-medium", loadError && "text-destructive")}>
+            {head}
+          </p>
+          <p className="text-[15px] text-muted-foreground">{sub}</p>
         </header>
+
+        {/* The sorts. "Today" is the day's work in the order to do it; the other three are
+            one question each, which is what the owner asked for instead of being told. */}
+        <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
+          <TabButton on={tab === "today"} onClick={() => setTab("today")}>
+            Today
+          </TabButton>
+          <TabButton on={tab === "waiting"} onClick={() => setTab("waiting")}>
+            Waiting {waiting.length > 0 && <Count>{waiting.length}</Count>}
+          </TabButton>
+          <TabButton on={tab === "flagged"} onClick={() => setTab("flagged")} dot={flagged.length > 0}>
+            Flagged
+          </TabButton>
+          <TabButton on={tab === "all"} onClick={() => setTab("all")}>
+            All
+          </TabButton>
+        </div>
 
         {loadError && (
           <p className="mx-3 mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
@@ -374,27 +373,35 @@ export default function Desk({
           </p>
         )}
 
-        {/* Inset and rounded rather than a full-bleed band. A flag has to be impossible
-            to miss, but a scarlet slab across the whole app makes the app look broken
-            rather than making one conversation look urgent. */}
-        {flagged.length > 0 && (
-          <button
-            onClick={() => pick(flagged[0]!)}
-            className="mb-5 block w-full rounded-xl bg-destructive px-4 py-3.5 text-left text-destructive-foreground"
-          >
-            <div className="text-[15px] font-semibold">
-              {flagged.length === 1
-                ? `${customerLabel(flagged[0]!)} needs a person.`
-                : `${flagged.length} conversations need a person.`}
-            </div>
-            <div className="mt-0.5 text-[13px] opacity-90">
-              The assistant has stopped replying. Open →
-            </div>
-          </button>
+        {tab === "flagged" && (
+          <div className="mx-1 mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-[13px]">
+            {flagged.length === 0 ? (
+              <p className="text-muted-foreground">
+                Nothing flagged. The assistant is handling every conversation itself.
+              </p>
+            ) : (
+              <p>
+                <span className="font-semibold text-destructive">
+                  The assistant has stopped replying{" "}
+                  {flagged.length === 1 ? "here" : `in these ${flagged.length}`}.
+                </span>{" "}
+                It sent one acknowledgement and nothing since. Only a person can answer
+                now, and the message content is deleted within 24 hours.
+              </p>
+            )}
+          </div>
         )}
 
-        {mode === "all" ? (
+        {tab === "all" ? (
           everything.map((c) => rowFor(c, { dim: !queued.has(c.id) }))
+        ) : tab === "waiting" ? (
+          waiting.length > 0 ? (
+            waiting.map((c) => rowFor(c, { deadline: true }))
+          ) : (
+            <Empty>Nobody is waiting on a person.</Empty>
+          )
+        ) : tab === "flagged" ? (
+          flagged.map((c) => rowFor(c, { deadline: true }))
         ) : (
           <>
             {waiting.length > 0 && (
@@ -429,21 +436,7 @@ export default function Desk({
         )}
 
         {!loadError && conversations.length === 0 && (
-          <p className="px-3 pt-4 text-[13px] text-muted-foreground">
-            Nothing yet. The first message will land here.
-          </p>
-        )}
-
-        {/* The way out of the exception queue. It is a link and not a tab because it is
-            the answer to an occasional question — "what did it say to everyone else" —
-            and not one of the day's jobs. */}
-        {mode === "today" && conversations.length > 0 && (
-          <button
-            onClick={() => setMode("all")}
-            className="mt-5 block px-3 text-[13px] text-blue-600"
-          >
-            See all {conversations.length} conversations →
-          </button>
+          <Empty>Nothing yet. The first message will land here.</Empty>
         )}
       </aside>
 
@@ -478,7 +471,7 @@ export default function Desk({
               </>
             )}
 
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-8">
               <Button
                 variant="outline"
                 size="sm"
@@ -487,9 +480,6 @@ export default function Desk({
               >
                 {exporting ? "Exporting…" : "Export enquiries"}
               </Button>
-              <span className="text-[12px] text-muted-foreground">
-                <Kbd>J</Kbd> <Kbd>K</Kbd> to move · <Kbd>↩</Kbd> open · <Kbd>esc</Kbd> back
-              </span>
             </div>
 
             {exportNote && (
@@ -529,6 +519,39 @@ function sentence(day: DayStats): string {
   } after you had closed for the day.`;
 }
 
+function TabButton({
+  on,
+  dot,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  dot?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] outline-none",
+        on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-black/[0.04]",
+      )}
+    >
+      {children}
+      {dot && <span className="h-1.5 w-1.5 rounded-full bg-destructive" />}
+    </button>
+  );
+}
+
+function Count({ children }: { children: React.ReactNode }) {
+  return <span className="tabular-nums opacity-60">{children}</span>;
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="px-3 pt-2 text-[13px] text-muted-foreground">{children}</p>;
+}
+
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-5">
@@ -547,20 +570,12 @@ function Stat({ n, label }: { n: string; label: string }) {
   );
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-border bg-muted px-1 font-sans text-[11px]">
-      {children}
-    </kbd>
-  );
-}
-
 function Row({
   c,
   sub,
   right,
   urgent,
-  flags,
+  kinds,
   callable,
   dim,
   active,
@@ -571,7 +586,7 @@ function Row({
   sub: string | null;
   right: string;
   urgent: boolean;
-  flags: SafetyFlag[];
+  kinds: SafetyFlag["kind"][];
   callable: boolean;
   dim: boolean;
   active: boolean;
@@ -585,7 +600,10 @@ function Row({
         active ? "bg-black/[0.06]" : cued ? "bg-black/[0.03]" : "hover:bg-black/[0.03]",
       )}
     >
-      <button onClick={onPick} className="block w-full text-left">
+      {/* `outline-none`: the browser's own focus ring drew a blue rectangle around the
+          row that had just been clicked, which read as a second kind of selection beside
+          the grey one and belonged to neither. The grey says which row is open. */}
+      <button onClick={onPick} className="block w-full text-left outline-none">
         <div className="flex items-baseline justify-between gap-3">
           <span className={cn("truncate text-[15px] font-medium", dim && "text-muted-foreground")}>
             {customerLabel(c)}
@@ -600,9 +618,9 @@ function Row({
           </span>
         </div>
         {sub && <div className="mt-0.5 truncate text-[13px] text-muted-foreground">{sub}</div>}
-        {flags.length > 0 && (
+        {kinds.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
-            {[...new Set(flags.map((f) => f.kind))].map((kind) => (
+            {[...new Set(kinds)].map((kind) => (
               <span
                 key={kind}
                 className="rounded bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-destructive-foreground"

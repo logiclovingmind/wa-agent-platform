@@ -347,8 +347,16 @@ describe("read receipts", () => {
 
   type Conv = ReturnType<typeof env.CONVERSATION.get>;
 
+  /**
+   * Each case marks its own message id and counts only the receipts naming it. Both cases
+   * used to mark "wamid.r1", so a request still in flight from the first landed in the
+   * second one's array and the length assertion failed with two identical receipts — a
+   * flake, and a confusing one, because the receipt it printed was the right receipt.
+   * Filtering by id still catches the failure worth catching: one message marked twice.
+   */
   async function receiptsFor(name: string, arrange?: (conv: Conv) => Promise<void>) {
     const token = await encryptUnderMasterKey("meta-token");
+    const messageId = `wamid.${name}`;
     const receipts: Array<Record<string, unknown>> = [];
 
     stubSupabase(
@@ -372,14 +380,14 @@ describe("read receipts", () => {
           });
         }
         const body = (await req.clone().json()) as Record<string, unknown>;
-        if (body["status"] === "read") receipts.push(body);
+        if (body["status"] === "read" && body["message_id"] === messageId) receipts.push(body);
         return Response.json({ messages: [{ id: "wamid.out1" }] });
       },
     );
 
     const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
     await arrange?.(conv);
-    await conv.onInbound(inbound("wamid.r1"));
+    await conv.onInbound(inbound(messageId));
     await fireAlarmAt(DEBOUNCE_MAX_MS, () => runDurableObjectAlarm(conv));
     return receipts;
   }
@@ -389,7 +397,7 @@ describe("read receipts", () => {
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
       status: "read",
-      message_id: "wamid.r1",
+      message_id: "wamid.receipt-bot",
       typing_indicator: { type: "text" },
     });
   });
@@ -399,7 +407,7 @@ describe("read receipts", () => {
   it("marks read without typing while a human holds the conversation", async () => {
     const receipts = await receiptsFor("receipt-human", (conv) => conv.takeOver());
     expect(receipts).toHaveLength(1);
-    expect(receipts[0]).toMatchObject({ status: "read", message_id: "wamid.r1" });
+    expect(receipts[0]).toMatchObject({ status: "read", message_id: "wamid.receipt-human" });
     expect(receipts[0]).not.toHaveProperty("typing_indicator");
   });
 });

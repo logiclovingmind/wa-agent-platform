@@ -447,7 +447,7 @@ export default function Thread({
           reading measure is capped. On a wide desktop an uncapped thread stretches a
           chat bubble to a thousand pixels, which is unreadable in the literal sense —
           the eye loses the line it was on. */}
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+      <div className="flex-1 overflow-y-auto overscroll-contain bg-[#EFEAE2] px-4 py-4">
         <div className="mx-auto max-w-[680px] space-y-2">
         {more && (
           <div className="text-center">
@@ -465,17 +465,22 @@ export default function Thread({
           return (
             <div key={m.id}>
               {newDay && (
-                <div className="py-3 text-center text-[12px] text-muted-foreground">
-                  {dayLabel(m.created_at)}
+                <div className="py-3 text-center">
+                  <span className="rounded-md bg-white/80 px-2 py-0.5 text-[12px] text-muted-foreground shadow-sm">
+                    {dayLabel(m.created_at)}
+                  </span>
                 </div>
               )}
               <div className={cn("flex flex-col", inbound ? "items-start" : "items-end")}>
                 {/* Timestamps sit outside the bubble. Inside, they were competing with the
                     message for the same block of colour. */}
+                {/* WhatsApp's own colours, because this *is* WhatsApp — the customer is
+                    reading these words in exactly those bubbles, and an owner comparing
+                    the two screens should not have to work out which side is theirs. */}
                 <div
                   className={cn(
-                    "max-w-[78%] rounded-2xl px-3.5 py-2 text-[15px] leading-snug",
-                    inbound ? "bg-muted" : "bg-primary text-primary-foreground",
+                    "max-w-[78%] rounded-2xl px-3.5 py-2 text-[15px] leading-snug shadow-sm",
+                    inbound ? "bg-white" : "bg-[#D9FDD3]",
                   )}
                 >
                   {m.type !== "text" && (
@@ -540,11 +545,11 @@ export default function Thread({
               className="min-h-10 resize-none rounded-xl bg-background"
             />
             <Button
-              className="shrink-0 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+              className="shrink-0 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
               disabled={busy || draft.trim() === "" || left?.closed === true}
               onClick={send}
             >
-              Send ⏎
+              Send
             </Button>
           </div>
         ) : (

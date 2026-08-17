@@ -49,15 +49,26 @@ async function page(from: number, size: number): Promise<{ rows: LeadRow[]; erro
   };
 }
 
-/** What the assistant learned, for the conversations currently on screen. */
+/**
+ * What the assistant learned, for the conversations currently on screen.
+ *
+ * Asked in batches because `.in()` puts every id in the query string: two hundred uuids
+ * is a 7KB URL, and the proxies in front of PostgREST cut a request header at 8KB. The
+ * failure is a 414 on a screen that would otherwise just be missing its subtitles.
+ */
+const IDS_PER_REQUEST = 100;
+
 export async function leadsFor(conversationIds: string[]): Promise<Map<string, Lead>> {
-  if (conversationIds.length === 0) return new Map();
-  const { data } = await supabase
-    .from("leads")
-    .select("id, conversation_id, name, intent, timeframe, budget, notes, updated_at")
-    .in("conversation_id", conversationIds)
-    .returns<Lead[]>();
-  return new Map((data ?? []).map((l) => [l.conversation_id, l]));
+  const found = new Map<string, Lead>();
+  for (let i = 0; i < conversationIds.length; i += IDS_PER_REQUEST) {
+    const { data } = await supabase
+      .from("leads")
+      .select("id, conversation_id, name, intent, timeframe, budget, notes, updated_at")
+      .in("conversation_id", conversationIds.slice(i, i + IDS_PER_REQUEST))
+      .returns<Lead[]>();
+    for (const l of data ?? []) found.set(l.conversation_id, l);
+  }
+  return found;
 }
 
 /**

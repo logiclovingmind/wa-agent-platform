@@ -111,6 +111,7 @@ check_anon() {
 
 check_anon search_everything "{\"p_org_id\":\"$NIL\",\"p_query\":\"anything\"}"
 check_anon admin_orgs '{}'
+check_anon desk_queue "{\"p_org_id\":\"$NIL\"}"
 check_anon org_month_spend "{\"p_org_id\":\"$NIL\"}"
 # Takes no arguments, so `{}` genuinely resolves it here — unlike the three above, where
 # an empty body would answer "could not find the function" and prove nothing.
