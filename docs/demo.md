@@ -66,10 +66,16 @@ Three things worth showing, in this order:
   and the booking appears under **Booked** while you are both looking at it. Worth saying
   out loud: it can only offer times that are actually free, and it cannot invent one.
 - **They can see the diary.** Sign in as the demo org's own owner and open the **Diary**
-  tab: a month calendar with the booking you just made on it, next to four that were
-  already there. This is the answer to "so where do the appointments actually go?", and it
-  is the one screen on the tour that is theirs rather than ours — **Flowin** carries the
-  next few under **Coming up** as well.
+  tab: **Today** is the booking you just made alongside the rest of the day, and **Month**
+  is the same week as a calendar to find a date on. This is the answer to "so where do the
+  appointments actually go?", and it is the one screen on the tour that is theirs rather
+  than ours — **Flowin** carries the next few under **Coming up** as well.
+- **And they can close the loop.** Earlier today there are two appointments already
+  settled: one **Came**, one **No show**. Press **Rebook** on the no-show to give them
+  another time — any day, off the same half-hour grid the bot offers — then open the
+  **Desk**: that customer is on it under *did not turn up*, and stays there until somebody
+  marks the callback done. Say this part out loud, because a prospect will assume
+  otherwise: moving a booking writes to the diary and messages nobody.
 - **A human can cut in.** Open the Inbox on your laptop, take over the conversation, type
   a reply as yourself. The bot stops; it resumes on its own after thirty minutes idle.
 - **What it costs and what it catches.** The training console shows ₹ per reply. **All
@@ -86,11 +92,19 @@ on screen. If the business name still reads like the prospect's, the reset has n
 
 It reports what it removed, and it always restores the same thing: **Demo Institute**,
 sector `general`, the seeded tone and languages, the two `Demo — …` documents, the seeded
-week of hours, and four upcoming bookings. Never the previous prospect's values.
+week of hours, a week of upcoming bookings, one blocked-out stretch, and the two settled
+appointments earlier today. Never the previous prospect's values.
 
-The four bookings are re-dated on every reset, taken by position from the free list rather
-than written as fixed times — so they are always this week, always inside opening hours,
-and always on the half-hour grid the bot itself offers.
+The bookings are re-dated on every reset, taken by position from the free list rather than
+written as fixed times — so they are always this week, always inside opening hours, and
+always on the half-hour grid the bot itself offers. The settled pair are counted backwards
+from now for the same reason; reset before opening time and there are no past slots that
+day, so those two are simply absent until the morning is under way.
+
+One thing the reset cannot put back: the no-show's link to a WhatsApp thread. The reset
+deletes every conversation, so it restores that appointment as a walk-in and the **Desk**
+beat above has nothing to name. Re-run `scripts/demo-seed.sql` before the next demo — the
+same file that seeds the inbox — and the link comes back with the threads.
 
 | Gone | Kept |
 |---|---|

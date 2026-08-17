@@ -117,12 +117,11 @@ export default function Search({
         onFocus={() => setClosed(false)}
         onKeyDown={(e) => e.key === "Escape" && setQuery("")}
         placeholder="Search"
-        className="border-transparent bg-black/[0.04] pr-10 text-sm md:h-8"
+        className="border-transparent bg-black/[0.04] text-sm md:h-8"
       />
-      {/* Shown because it works, not as decoration. */}
-      <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[11px] text-muted-foreground md:block">
-        ⌘K
-      </kbd>
+      {/* ⌘K still focuses this box; the badge that said so is gone. It was two characters
+          of chrome in a 224px sidebar, and the people who use the shortcut do not need to
+          be told twice. */}
 
       {/* Open for any live search, not only one with results. A date range that matches
           nothing used to close the panel, which took the date inputs away with it and

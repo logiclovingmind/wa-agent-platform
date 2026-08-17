@@ -66,7 +66,6 @@ export default function App() {
   // it may well be older than the fifty rows the list holds.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(0);
-  const [orgName, setOrgName] = useState("");
   const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
@@ -124,19 +123,6 @@ export default function App() {
       .maybeSingle<{ is_platform_admin: boolean }>();
     setIsPlatformAdmin(me?.is_platform_admin ?? false);
     setIdentified(true);
-
-    // The client's own name in the corner, not ours. Best effort: if RLS or a missing
-    // column says no, the sidebar keeps the logo and nothing breaks — a shell that
-    // fails to render because a decoration failed to load is not a trade worth making.
-    const org = memberships?.[0]?.org_id;
-    if (org) {
-      const { data: row } = await supabase
-        .from("organizations")
-        .select("name")
-        .eq("id", org)
-        .maybeSingle<{ name: string }>();
-      setOrgName(row?.name ?? "");
-    }
   }
 
   if (!ready) return <div className="p-8 text-muted-foreground">Loading…</div>;
@@ -233,9 +219,11 @@ export default function App() {
         <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 py-2 md:w-56 md:flex-col md:items-stretch md:gap-0.5 md:overflow-visible md:border-b-0 md:border-r md:bg-[#FAFAFA] md:px-3 md:py-4 md:rounded-l-xl">
           <div className="mr-2 flex shrink-0 items-center gap-2 md:mb-4 md:mr-0 md:px-2">
             <img src="/logo.svg" alt="" className="h-6 w-6 shrink-0" />
-            <span className="hidden truncate text-sm font-semibold md:block">
-              {orgName || "Logic Loving Mind"}
-            </span>
+            {/* Ours, not the client's. The org name was here and it is the one thing on
+                this screen the client already knows — while every person they show the
+                dashboard to is looking at an unbranded tool. The name still heads the
+                training console, where it identifies which org is being edited. */}
+            <img src="/llm.svg" alt="LLM" className="hidden h-4 md:block" />
           </div>
 
           {orgId && (

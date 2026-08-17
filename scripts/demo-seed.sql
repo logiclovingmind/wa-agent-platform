@@ -811,6 +811,23 @@ $kb$)
 -- guardrails, not an industry (docs/admin-panel.md §10).
 select app.demo_restore_defaults();
 
+-- Today's no-show, given a thread to belong to.
+--
+-- The pair of settled appointments inside `demo_restore_defaults()` are walk-ins carrying
+-- no conversation, deliberately: the reset button calls that function and must not depend
+-- on rows this file writes. But a walk-in who did not turn up cannot show the half of the
+-- feature that matters — `desk_queue` reads the no-show and puts the customer back on the
+-- desk under "did not turn up", which is the whole follow-up mechanism. So the link is
+-- made here, where the threads exist.
+update appointments a
+set conversation_id = c.id,
+    customer_name = coalesce(c.customer_name, a.customer_name)
+from conversations c
+where a.org_id = app.demo_org()
+  and a.status = 'no_show'
+  and c.org_id = a.org_id
+  and c.customer_wa_id = '919990010009';
+
 commit;
 
 -- The live database still holds the earlier six-digit demo rows (999001…999008), which

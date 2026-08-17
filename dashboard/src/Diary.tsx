@@ -56,8 +56,14 @@ interface Slot {
   slot_minutes: number;
 }
 
-/** Which span of days the left column is listing. */
-type Tab = "today" | "week" | "month";
+/**
+ * Which span of days the left column is listing.
+ *
+ * There was a week between these two. It was the default, and it was the one span nobody
+ * could name: seven days from an anchor that moves is neither "the rest of today" nor
+ * "August", so a booking on Thursday was three clicks from being found either way.
+ */
+type Tab = "today" | "month";
 
 /**
  * Midnight IST on a `YYYY-MM-DD`, as an instant.
@@ -100,6 +106,12 @@ const COLUMNS = [
 
 const columnOf = (day: string) => (dayOfWeek(day) + 6) % 7;
 
+/** What happened, for a booking whose hour has been settled one way or the other. */
+const OUTCOME: Record<string, string> = {
+  attended: "Came",
+  no_show: "No show",
+};
+
 function who(b: Booking): string {
   // `service` carries the note on a block — the column already exists and a block has no
   // service, so the alternative was a column that only one `kind` would ever use.
@@ -119,7 +131,7 @@ function dayHeading(day: string): string {
 
 export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
   const today = istToday();
-  const [tab, setTab] = useState<Tab>("week");
+  const [tab, setTab] = useState<Tab>("today");
   /** The first day of the listed span. Moving it moves the selection with it, which is
       what keeps the open day inside the rows that were fetched. */
   const [anchor, setAnchor] = useState(today);
@@ -131,20 +143,18 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const [error, setError] = useState<string | null>(null);
   /** Which form the day pane is showing. Neither, until asked for. */
   const [action, setAction] = useState<"book" | "block" | null>(null);
+  /** The booking being given another time, if any. One at a time, by construction. */
+  const [moving, setMoving] = useState<Booking | null>(null);
+  /** The one thing that happened off-screen and has to be said in words. */
+  const [note, setNote] = useState<string | null>(null);
 
   /** The open day. On a phone `selected` is also what covers the list with the day. */
   const day = selected ?? today;
 
   // Only the tab and its anchor decide what is fetched, so these are derived rather than
   // held: two pieces of state that must agree about a date range eventually will not.
-  const from = tab === "today" ? today : tab === "week" ? anchor : shiftMonth(anchor, 0);
-  const to =
-    tab === "today" ? shiftDay(today, 1) : tab === "week" ? shiftDay(anchor, 7) : shiftMonth(anchor, 1);
-
-  const days = Array.from(
-    { length: tab === "today" ? 1 : 7 },
-    (_, i) => shiftDay(from, i),
-  );
+  const from = tab === "today" ? today : shiftMonth(anchor, 0);
+  const to = tab === "today" ? shiftDay(today, 1) : shiftMonth(anchor, 1);
 
   useEffect(() => {
     if (!orgId) return;
@@ -164,7 +174,11 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   }, [orgId]);
 
   // A form left open from the previous day would submit against this one.
-  useEffect(() => setAction(null), [day]);
+  useEffect(() => {
+    setAction(null);
+    setMoving(null);
+    setNote(null);
+  }, [day]);
 
   /**
    * The bookable slots on the open day, asked of Postgres rather than derived from `hours`
@@ -229,6 +243,55 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     setBusy(false);
     if (writeError) return setError(writeError.message);
     await loadRange();
+  }
+
+  /**
+   * What happened at the hour: `attended`, `no_show`, or `booked` to undo either.
+   *
+   * A plain update, not an RPC. Nothing here needs to be decided in Postgres — the slot is
+   * spent whichever way this goes, so no availability changes and there is no race to lose.
+   * Marking a no-show is also the follow-up: `desk_queue` reads this status and puts the
+   * customer back on the desk with a reason, which is why there is no second button here.
+   */
+  async function mark(id: string, status: string) {
+    setBusy(true);
+    const { error: writeError } = await supabase
+      .from("appointments")
+      .update({ status })
+      .eq("id", id);
+    setBusy(false);
+    if (writeError) return setError(writeError.message);
+    await loadRange();
+  }
+
+  /**
+   * Another time for someone already in the book.
+   *
+   * Returns false when the new slot went while the list was open, same as `bookManual` and
+   * for the same reason: the old booking is then still standing, and a staff member who
+   * believes they moved somebody would be wrong about both ends of it.
+   */
+  async function move(id: string, startsAt: string): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    const { data, error: writeError } = await supabase.rpc("reschedule_appointment", {
+      p_org_id: orgId,
+      p_id: id,
+      p_starts_at: startsAt,
+    });
+    setBusy(false);
+    if (writeError) {
+      setError(writeError.message);
+      return false;
+    }
+    if (data === null) return false;
+    // Said here rather than in the form, because the form is about to close and the new
+    // time is very often outside the span on screen: moving today's 10:30 to Thursday
+    // takes it off this list entirely, and "it vanished" is not a confirmation.
+    setNote(`Moved to ${dayHeading(istDay(startsAt))}, ${istTime(startsAt)}.`);
+    setMoving(null);
+    await loadRange();
+    return true;
   }
 
   /**
@@ -326,8 +389,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
       rows were not fetched. Every date change in this screen goes through one of these
       three, which is the only reason the single range fetch is safe. */
   function go(delta: number) {
-    const next =
-      tab === "month" ? shiftMonth(anchor, delta) : shiftDay(anchor, delta * 7);
+    const next = shiftMonth(anchor, delta);
     setAnchor(next);
     setSelected(next);
   }
@@ -364,6 +426,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const weeks = Array.from({ length: 6 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
 
   const onDay = byDay.get(day) ?? [];
+  const onToday = byDay.get(today) ?? [];
   const blocksOnDay = onDay.filter((b) => b.kind === "block");
   const openDays = new Set((hours ?? []).map((h) => h.weekday));
   const closedOnDay = hours !== null && !openDays.has(dayOfWeek(day));
@@ -372,8 +435,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const auto = real.filter((b) => b.conversation_id !== null).length;
   // Not "this week": the span moves with Back and Next, and a heading that keeps saying
   // "this week" over next month's rows is the kind of wrong nobody notices.
-  const span =
-    tab === "today" ? "today" : tab === "week" ? "in these seven days" : `in ${monthLabel(monthOf(anchor))}`;
+  const span = tab === "today" ? "today" : `in ${monthLabel(monthOf(anchor))}`;
 
   const head =
     bookings === null
@@ -401,14 +463,11 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           <p className="text-[15px] text-muted-foreground">{sub}</p>
         </header>
 
-        {/* Week is the default because the assistant only offers times a week ahead, so
-            three quarters of a month grid is cells it can never fill. */}
+        {/* Today is the default: it is the only span anybody opens this screen to see, and
+            the month beside it is for finding a date rather than working one. */}
         <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
           <TabButton on={tab === "today"} onClick={() => pickTab("today")}>
             Today
-          </TabButton>
-          <TabButton on={tab === "week"} onClick={() => pickTab("week")}>
-            Week
           </TabButton>
           <TabButton on={tab === "month"} onClick={() => pickTab("month")}>
             Month
@@ -428,10 +487,10 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           </p>
         )}
 
-        {tab !== "today" && (
+        {tab === "month" && (
           <div className="mb-3 flex items-center gap-2 px-3">
             <span className="mr-auto text-[13px] text-muted-foreground">
-              {tab === "month" ? monthLabel(monthOf(anchor)) : `${dayHeading(from)} — ${dayHeading(shiftDay(to, -1))}`}
+              {monthLabel(monthOf(anchor))}
             </span>
             <Step onClick={() => go(-1)}>Back</Step>
             <Step onClick={reset}>Today</Step>
@@ -491,34 +550,27 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
         ) : bookings === null ? (
           <Empty>Loading…</Empty>
         ) : (
-          days.map((d) => {
-            const list = byDay.get(d) ?? [];
-            const closed = hours !== null && !openDays.has(dayOfWeek(d));
-            return (
-              <Group
-                key={d}
-                title={d === today ? "Today" : dayHeading(d)}
-                right={
-                  <button
-                    type="button"
-                    onClick={() => setSelected(d)}
-                    className={cn("text-[13px]", d === day ? "text-muted-foreground" : "text-blue-600")}
-                  >
-                    {list.length > 0 && <Count>{list.length} · </Count>}
-                    Open
-                  </button>
-                }
+          <Group
+            title="Today"
+            right={
+              <button
+                type="button"
+                onClick={() => setSelected(today)}
+                className={cn("text-[13px]", today === day ? "text-muted-foreground" : "text-blue-600")}
               >
-                {list.length === 0 ? (
-                  <Empty>{closed ? "Closed." : "Nothing booked."}</Empty>
-                ) : (
-                  list.map((b) => (
-                    <BookingRow key={b.id} b={b} active={d === day} onPick={() => setSelected(d)} />
-                  ))
-                )}
-              </Group>
-            );
-          })
+                {onToday.length > 0 && <Count>{onToday.length} · </Count>}
+                Open
+              </button>
+            }
+          >
+            {onToday.length === 0 ? (
+              <Empty>{hours !== null && !openDays.has(dayOfWeek(today)) ? "Closed." : "Nothing booked."}</Empty>
+            ) : (
+              onToday.map((b) => (
+                <BookingRow key={b.id} b={b} active={today === day} onPick={() => setSelected(today)} />
+              ))
+            )}
+          </Group>
         )}
       </aside>
 
@@ -555,14 +607,31 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
               <Empty>Nothing booked on this day.</Empty>
             ) : (
               onDay.map((b) => (
-                <BookingRow
-                  key={b.id}
-                  b={b}
-                  busy={busy}
-                  onCancel={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
-                />
+                <div key={b.id}>
+                  <BookingRow
+                    b={b}
+                    busy={busy}
+                    onCancel={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
+                    onMark={(status) => void mark(b.id, status)}
+                    onMove={() => {
+                      setNote(null);
+                      setMoving((m) => (m?.id === b.id ? null : b));
+                    }}
+                    moving={moving?.id === b.id}
+                  />
+                  {moving?.id === b.id && (
+                    <RescheduleForm
+                      orgId={orgId}
+                      from={day}
+                      busy={busy}
+                      onMove={(startsAt) => move(b.id, startsAt)}
+                    />
+                  )}
+                </div>
               ))
             )}
+
+            {note && <p className="mt-2 px-3 text-[13px] text-muted-foreground">{note}</p>}
 
             {/* One click for the common case. Blocking an afternoon makes eight rows, and
                 clearing them one at a time is eight confirmations of the same decision. */}
@@ -643,6 +712,28 @@ function Step({ onClick, children }: { onClick: () => void; children: React.Reac
   );
 }
 
+/** A row action. Plain text, because four boxed buttons under every booking is a toolbar. */
+function Act({
+  busy,
+  onClick,
+  children,
+}: {
+  busy: boolean | undefined;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      className="text-blue-600 disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * One appointment, in the desk's row shape. A block is dimmed rather than boxed: it is
  * the absence of an appointment, and drawing it as loudly as a customer made a blocked
@@ -652,22 +743,38 @@ function BookingRow({
   b,
   active,
   busy,
+  moving,
   onPick,
   onCancel,
+  onMark,
+  onMove,
 }: {
   b: Booking;
   active?: boolean;
   busy?: boolean;
+  moving?: boolean;
   onPick?: () => void;
   onCancel?: () => void;
+  onMark?: (status: string) => void;
+  onMove?: () => void;
 }) {
   const block = b.kind === "block";
+  const outcome = OUTCOME[b.status];
+  // The hour has been and gone, so there is something to say about whether it happened.
+  // Before it, the only honest actions are moving the booking or cancelling it.
+  const past = Date.parse(b.starts_at) <= Date.now();
   const line = (
     <div className="flex items-baseline justify-between gap-3">
-      <span className={cn("truncate text-[15px]", block ? "text-muted-foreground" : "font-medium")}>
+      <span
+        className={cn(
+          "truncate text-[15px]",
+          block || b.status === "no_show" ? "text-muted-foreground" : "font-medium",
+        )}
+      >
         {who(b)}
       </span>
       <span className="shrink-0 text-[13px] tabular-nums text-muted-foreground">
+        {outcome && <span className="mr-2 tracking-normal">{outcome}</span>}
         {istTime(b.starts_at)}
       </span>
     </div>
@@ -691,18 +798,151 @@ function BookingRow({
       )}
 
       {onCancel && (
-        <div className="mt-0.5 flex items-baseline gap-3 text-[13px] text-muted-foreground">
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
           <span className="tabular-nums">{b.duration_minutes} min</span>
           {b.conversation_id && !block && <span>booked on WhatsApp</span>}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onCancel}
-            className="ml-auto text-destructive disabled:opacity-50"
-          >
-            {block ? "Unblock" : "Cancel"}
-          </button>
+          {/* Marking the no-show is what puts them back on the desk, so the row says so
+              rather than offering a second button that would do it again. */}
+          {b.status === "no_show" && b.conversation_id && <span>on the desk to call back</span>}
+
+          <span className="ml-auto" />
+
+          {!block && past && b.status === "booked" && (
+            <>
+              <Act busy={busy} onClick={() => onMark?.("attended")}>
+                Came
+              </Act>
+              <Act busy={busy} onClick={() => onMark?.("no_show")}>
+                No show
+              </Act>
+            </>
+          )}
+
+          {!block && outcome && (
+            <Act busy={busy} onClick={() => onMark?.("booked")}>
+              Undo
+            </Act>
+          )}
+
+          {!block && (
+            <Act busy={busy} onClick={() => onMove?.()}>
+              {moving ? "Never mind" : b.status === "no_show" ? "Rebook" : "Move"}
+            </Act>
+          )}
+
+          {(block || b.status === "booked") && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCancel}
+              className="text-destructive disabled:opacity-50"
+            >
+              {block ? "Unblock" : "Cancel"}
+            </button>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Another time for a booking that already exists.
+ *
+ * Fetches its own slots rather than reusing the day pane's, because the whole point is a
+ * different day: somebody who did not turn up this morning is rebooked into next week, and
+ * the list on screen only knows about the day that is open.
+ *
+ * Times come from `day_slots` for the same reason the hand-entry form's do — a reschedule
+ * typed as free text lands off the grid, and `reschedule_appointment` refuses it.
+ */
+function RescheduleForm({
+  orgId,
+  from,
+  busy,
+  onMove,
+}: {
+  orgId: string;
+  /** The day the booking is on now, which is where the date picker starts. */
+  from: string;
+  busy: boolean;
+  onMove: (startsAt: string) => Promise<boolean>;
+}) {
+  const [day, setDay] = useState(from);
+  const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [at, setAt] = useState("");
+  const [lost, setLost] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    setSlots(null);
+    setAt("");
+    setLost(false);
+    void supabase
+      .rpc("day_slots", { p_org_id: orgId, p_day: day })
+      .then(({ data }) => live && setSlots((data as Slot[] | null) ?? []));
+    return () => {
+      live = false;
+    };
+  }, [orgId, day]);
+
+  const chosen = at || slots?.[0]?.starts_at || "";
+
+  return (
+    <div className="mb-2 ml-3 space-y-2 border-l border-border pl-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="date"
+          aria-label="New date"
+          value={day}
+          onChange={(e) => e.target.value && setDay(e.target.value)}
+          className={FIELD}
+        />
+        {slots === null ? (
+          <span className="text-[13px] text-muted-foreground">Loading…</span>
+        ) : slots.length === 0 ? (
+          <span className="text-[13px] text-muted-foreground">
+            Nothing free that day — booked, blocked, or you are closed.
+          </span>
+        ) : (
+          <>
+            <select
+              aria-label="New time"
+              value={chosen}
+              onChange={(e) => {
+                setAt(e.target.value);
+                setLost(false);
+              }}
+              className={FIELD}
+            >
+              {slots.map((s) => (
+                <option key={s.starts_at} value={s.starts_at}>
+                  {istTime(s.starts_at)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void onMove(chosen).then((ok) => setLost(!ok))}
+              className={GO}
+            >
+              Move
+            </button>
+          </>
+        )}
+      </div>
+
+      {lost ? (
+        <p className="text-[13px] text-destructive">
+          That time went while you were choosing. Nothing moved — pick another.
+        </p>
+      ) : (
+        // Worth saying out loud: this writes to the diary and nothing else. Anyone who
+        // assumes the customer was told is a customer who arrives at the old time.
+        <p className="text-[13px] text-muted-foreground">
+          The name and service move with it. Nobody is messaged — tell them yourself.
+        </p>
       )}
     </div>
   );
