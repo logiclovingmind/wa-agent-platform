@@ -47,11 +47,27 @@ export interface Lead {
   notes?: string;
 }
 
+/**
+ * A slot the model chose, named by the exact label it was offered.
+ *
+ * `slot` is a label, never a date. The model is handed a fixed list of IST labels and may
+ * only echo one back; the caller maps the label to an instant through the same list it
+ * built. No time is ever parsed out of model output, so the model cannot invent one — a
+ * hallucinated or reformatted label fails to match and books nothing.
+ */
+export interface BookingRequest {
+  slot: string;
+  name?: string;
+  service?: string;
+}
+
 export interface Completion {
   reply: string;
   flags: ModelFlags;
   /** Absent when the model returned no `lead` object, or one with nothing in it. */
   lead?: Lead;
+  /** Absent unless the model named a slot. Never set when no slots were offered. */
+  booking?: BookingRequest;
   /** For usage_events. Snapshotted at send time because prices change. */
   usage: { promptTokens: number; completionTokens: number };
 }
@@ -76,6 +92,29 @@ function parseLead(raw: unknown): Lead | undefined {
   }
 
   return Object.keys(lead).length > 0 ? lead : undefined;
+}
+
+/**
+ * Same defensive shape as `parseLead`, with one extra rule: no `slot`, no booking. The
+ * model asked for JSON answers `""` far more often than it omits a key, and an empty slot
+ * with a filled-in name is a turn where it talked about booking without choosing a time.
+ */
+function parseBooking(raw: unknown): BookingRequest | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+
+  const source = raw as Record<string, unknown>;
+  const slot = typeof source["slot"] === "string" ? source["slot"].trim().slice(0, 60) : "";
+  if (!slot) return undefined;
+
+  const booking: BookingRequest = { slot };
+  for (const field of ["name", "service"] as const) {
+    const value = source[field];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim().slice(0, 200);
+    if (trimmed) booking[field] = trimmed;
+  }
+
+  return booking;
 }
 
 const EMPTY_FLAGS: ModelFlags = { minor: false, distress: false, out_of_scope: false };
@@ -215,10 +254,12 @@ async function once(env: LlmEnv, messages: ChatMessage[]): Promise<Completion> {
     reply?: unknown;
     flags?: Partial<ModelFlags>;
     lead?: unknown;
+    booking?: unknown;
   };
   if (typeof parsed.reply !== "string") throw new Error("llm returned no reply string");
 
   const lead = parseLead(parsed.lead);
+  const booking = parseBooking(parsed.booking);
 
   return {
     reply: parsed.reply,
@@ -228,6 +269,7 @@ async function once(env: LlmEnv, messages: ChatMessage[]): Promise<Completion> {
     // Omitted entirely rather than empty, so `exactOptionalPropertyTypes` keeps the
     // "the model said nothing about this customer" case distinct from "it said blank".
     ...(lead ? { lead } : {}),
+    ...(booking ? { booking } : {}),
     usage: {
       promptTokens: body.usage?.prompt_tokens ?? 0,
       completionTokens: body.usage?.completion_tokens ?? 0,

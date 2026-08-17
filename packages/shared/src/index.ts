@@ -15,6 +15,7 @@ export {
   VIDEO_REPLY,
   PAUSED_REPLY,
   CLOSED_REPLY,
+  SLOT_TAKEN_REPLY,
   SECTORS,
   prefilter,
   flagFromModel,
@@ -27,6 +28,8 @@ export type { SafetyKind, ModelFlags, ImageFlags, Sector, OutputVerdict } from "
 export {
   HISTORY_LIMIT,
   KB_DOC_LIMIT,
+  SLOT_DAYS,
+  SLOT_LIMIT,
   DEFAULT_REPLY_MAX_WORDS,
   buildSystemPrompt,
   buildMessages,
@@ -34,7 +37,7 @@ export {
 export type { ChatMessage, PromptInput, PromptTurn } from "./prompt.js";
 
 export { LLM_TIMEOUT_MS, DEFAULT_MODEL, complete, classifyImage, costMicros } from "./llm.js";
-export type { LlmEnv, Completion, ImageClassification, Lead } from "./llm.js";
+export type { LlmEnv, BookingRequest, Completion, ImageClassification, Lead } from "./llm.js";
 
 export { decideReply, holdFor, HOLD_TEXT } from "./reply.js";
 export type {
@@ -60,6 +63,7 @@ export type { StorageEnv } from "./storage.js";
 export {
   WINDOW_MS,
   IST_TIME_ZONE,
+  istSlotLabel,
   windowExpiresAt,
   isWindowOpen,
   isWithinHours,

@@ -18,6 +18,8 @@ export const ORG_SCOPED_TABLES = [
   "audit_log",
   "safety_flags",
   "leads",
+  "business_hours",
+  "appointments",
 ] as const;
 
 export type OrgScopedTable = (typeof ORG_SCOPED_TABLES)[number];

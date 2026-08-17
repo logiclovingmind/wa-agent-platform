@@ -48,6 +48,19 @@ export const CLOSED_REPLY =
   "Thanks for your message — we're closed at the moment. Someone from our team will reply as soon as we're back.";
 
 /**
+ * Sent when the model wrote a confirmation for a slot it could not actually take — either
+ * a label nobody offered, or one someone else claimed in the seconds between the prompt
+ * being built and the reply being written.
+ *
+ * The model's own text is discarded on this path, because that text says "you're booked"
+ * and the customer is not. Deliberately vague about which of the two happened: neither is
+ * the customer's problem, and "that time was just taken" is true enough in the case that
+ * actually occurs.
+ */
+export const SLOT_TAKEN_REPLY =
+  "Sorry — that time has just been taken. Someone from our team will message you with the next available slot.";
+
+/**
  * Media is never *answered* by the model: answering from a caption alone is a guess, so
  * the turn goes to a person — and says so, rather than leaving the customer waiting on a
  * reply that never comes. An image is separately shown to the classifier below, but that

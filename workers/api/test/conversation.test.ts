@@ -1,6 +1,6 @@
 import { env, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEBOUNCE_MS, type InboundMessage } from "../src/do/conversation.js";
+import { DEBOUNCE_MAX_MS, DEBOUNCE_MS, type InboundMessage } from "../src/do/conversation.js";
 import { stubSupabase, storedMedia } from "./fake-supabase.js";
 import { encryptUnderMasterKey } from "./fixtures.js";
 
@@ -44,6 +44,26 @@ async function fireAlarmAt(offsetMs: number, run: () => Promise<boolean>): Promi
   }
 }
 
+/**
+ * Holds a fake clock across a whole test so the deadline arithmetic can be driven step
+ * by step. `fireAlarmAt` above jumps once and restores, which cannot express "a message
+ * arrived one second into the burst" — the inbound calls have to see the moved clock too.
+ * Only `Date` is faked, for the same reason as above.
+ */
+async function onClock(run: (advance: (ms: number) => void) => Promise<void>): Promise<void> {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const base = Date.now();
+  let offset = 0;
+  try {
+    await run((ms) => {
+      offset += ms;
+      vi.setSystemTime(base + offset);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("debounce", () => {
@@ -65,6 +85,51 @@ describe("debounce", () => {
     await conv.onInbound(inbound("wamid.o1"));
     expect(await fireAlarmAt(DEBOUNCE_MS, () => runDurableObjectAlarm(conv))).toBe(true);
     expect(await runDurableObjectAlarm(conv)).toBe(false);
+  });
+
+  // The wait is short so a lone message is answered quickly, which only stays safe
+  // because a second message restarts it. Without this the burst above would split into
+  // two replies and break invariant 5.
+  it("restarts the wait when another message arrives", async () => {
+    const conv = stub("debounce-extend");
+    await onClock(async (advance) => {
+      await conv.onInbound(inbound("wamid.e1"));
+      advance(1_000);
+      await conv.onInbound(inbound("wamid.e2"));
+
+      // Past the first message's deadline, short of the second's. The old flat deadline
+      // would have flushed here and answered "wamid.e1" on its own.
+      advance(600);
+      await runDurableObjectAlarm(conv);
+      expect((await conv.getState()).pending).toBe(2);
+
+      advance(DEBOUNCE_MS);
+      await runDurableObjectAlarm(conv);
+      const state = await conv.getState();
+      expect(state.pending).toBe(0);
+      expect(state.lastBatchSize).toBe(2);
+    });
+  });
+
+  // The reason the restart above needs a ceiling: someone typing steadily every second
+  // would otherwise never be answered at all.
+  it("stops extending at the ceiling", async () => {
+    const conv = stub("debounce-ceiling");
+    await onClock(async (advance) => {
+      await conv.onInbound(inbound("wamid.c1"));
+      for (const id of ["wamid.c2", "wamid.c3", "wamid.c4"]) {
+        advance(1_000);
+        await conv.onInbound(inbound(id));
+      }
+
+      // Four messages, one per second. The last one landed at 3s and would extend to
+      // 4.5s on its own; the ceiling holds it at 4s from the first.
+      advance(DEBOUNCE_MAX_MS - 3_000);
+      await runDurableObjectAlarm(conv);
+      const state = await conv.getState();
+      expect(state.pending).toBe(0);
+      expect(state.lastBatchSize).toBe(4);
+    });
   });
 });
 
@@ -271,5 +336,70 @@ describe("erase", () => {
     await conv.erase();
 
     expect(storedMedia.has(path)).toBe(false);
+  });
+});
+
+// The blue tick is a statement of fact and goes out on every turn. The typing bubble is
+// a promise, and Meta asks that it only be shown when a reply is really coming — so it
+// is the pairing of the two that is worth a test, not either one alone.
+describe("read receipts", () => {
+  const ACC = "22222222-2222-2222-2222-222222222222";
+
+  type Conv = ReturnType<typeof env.CONVERSATION.get>;
+
+  async function receiptsFor(name: string, arrange?: (conv: Conv) => Promise<void>) {
+    const token = await encryptUnderMasterKey("meta-token");
+    const receipts: Array<Record<string, unknown>> = [];
+
+    stubSupabase(
+      (call) => {
+        if (call.table === "conversations") return [{ id: "33333333-3333-3333-3333-333333333333" }];
+        if (call.table.startsWith("wa_accounts")) {
+          return [{
+            id: ACC,
+            phone_number_id: "PN1",
+            token_ciphertext: token.ciphertext,
+            token_iv: token.iv,
+            token_key_version: 1,
+          }];
+        }
+        return [];
+      },
+      async (req, url) => {
+        if (url.hostname === "llm.test") {
+          return Response.json({
+            choices: [{ message: { content: JSON.stringify({ reply: "hello", flags: {} }) } }],
+          });
+        }
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body["status"] === "read") receipts.push(body);
+        return Response.json({ messages: [{ id: "wamid.out1" }] });
+      },
+    );
+
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
+    await arrange?.(conv);
+    await conv.onInbound(inbound("wamid.r1"));
+    await fireAlarmAt(DEBOUNCE_MAX_MS, () => runDurableObjectAlarm(conv));
+    return receipts;
+  }
+
+  it("shows the typing bubble when the bot is about to answer", async () => {
+    const receipts = await receiptsFor("receipt-bot");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      status: "read",
+      message_id: "wamid.r1",
+      typing_indicator: { type: "text" },
+    });
+  });
+
+  // A human holding the conversation is genuinely reading the inbox, so the tick is
+  // still honest — but nothing is being typed, and the bubble would expire into silence.
+  it("marks read without typing while a human holds the conversation", async () => {
+    const receipts = await receiptsFor("receipt-human", (conv) => conv.takeOver());
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ status: "read", message_id: "wamid.r1" });
+    expect(receipts[0]).not.toHaveProperty("typing_indicator");
   });
 });

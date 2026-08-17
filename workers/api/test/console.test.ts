@@ -16,6 +16,10 @@ interface Scenario {
   languages?: string | null;
   kb?: string;
   reply?: string;
+  /** What `free_slots` answers, as ISO instants. Absent means this client has no diary. */
+  slots?: string[];
+  /** The label the model picks, if any. */
+  booking?: string;
 }
 
 /** What the model was actually shown, so a test can assert on the finished prompt. */
@@ -52,6 +56,8 @@ function harness(scenario: Scenario = {}) {
           return [{ raw: scenario.kb ?? "Haircut ₹400. Open 9am to 8pm." }];
         case "rpc/org_month_spend":
           return scenario.monthSpend ?? 0;
+        case "rpc/free_slots":
+          return (scenario.slots ?? []).map((starts_at) => ({ starts_at }));
         default:
           return [];
       }
@@ -68,6 +74,7 @@ function harness(scenario: Scenario = {}) {
                 content: JSON.stringify({
                   reply: scenario.reply ?? "We're open 9am to 8pm — shall I book you in?",
                   flags: { minor: false, distress: false, out_of_scope: false },
+                  ...(scenario.booking ? { booking: { slot: scenario.booking } } : {}),
                 }),
               },
             },
@@ -188,6 +195,41 @@ describe("training console", () => {
     expect(sentPrompts[0]).toContain("- Tone: patient and encouraging");
     expect(sentPrompts[0]).toContain("under 140 words");
     expect(sentPrompts[0]).toContain("English, Hindi");
+  });
+
+  // The console is the reply path minus the sending, so it has to read the diary the DO
+  // reads. A console built without this offers no times at all on a client whose live bot
+  // books happily, and reports that difference as the client's behaviour.
+  it("offers the same free times the live bot would", async () => {
+    harness({ slots: ["2030-01-07T04:30:00.000Z", "2030-01-07T05:00:00.000Z"] });
+
+    const res = await run({ text: "can I come Monday?" });
+    expect(((await res.json()) as { slotsOffered: number }).slotsOffered).toBe(2);
+    expect(sentPrompts[0]).toContain("Mon 7 Jan, 10:00 am");
+    expect(sentPrompts[0]).toContain("Mon 7 Jan, 10:30 am");
+  });
+
+  it("says nothing about booking for a client with no hours", async () => {
+    harness();
+    await run({ text: "can I come Monday?" });
+
+    expect(sentPrompts[0]).not.toContain("booking");
+    expect(sentPrompts[0]).not.toContain("appointment times are free");
+  });
+
+  // The console writes a usage row and an audit row, and nothing else ever. A slot held
+  // for a customer who does not exist would be a real appointment blocking a real one.
+  it("reports the slot the model chose without taking it", async () => {
+    const rest = harness({
+      slots: ["2030-01-07T04:30:00.000Z"],
+      booking: "Mon 7 Jan, 10:00 am",
+      reply: "Booked you in for Monday at 10.",
+    });
+
+    const res = await run({ text: "monday 10 please" });
+    expect(((await res.json()) as { booking: string | null }).booking).toBe("Mon 7 Jan, 10:00 am");
+    expect(writesTo(rest, "appointments")).toHaveLength(0);
+    expect(rest.some((c) => c.table.startsWith("rpc/book_appointment"))).toBe(false);
   });
 
   it("replays browser-held history as the conversation the model sees", async () => {

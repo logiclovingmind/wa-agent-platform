@@ -115,6 +115,13 @@ check_anon org_month_spend "{\"p_org_id\":\"$NIL\"}"
 # Takes no arguments, so `{}` genuinely resolves it here — unlike the three above, where
 # an empty body would answer "could not find the function" and prove nothing.
 check_anon demo_reset '{}'
+check_anon demo_setup_save '{"p_label":"anything"}'
+check_anon demo_setup_load "{\"p_id\":\"$NIL\"}"
+# free_slots is granted to `authenticated` (the dashboard shows the diary), so this only
+# asserts the anon half. book_appointment is revoked from everyone: it books across orgs
+# by signature and the Worker calls it as service_role.
+check_anon free_slots "{\"p_org_id\":\"$NIL\"}"
+check_anon book_appointment "{\"p_org_id\":\"$NIL\",\"p_conversation_id\":null,\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
 
 if [[ "$FAILED" == true ]]; then
   echo "anon can reach a function it should not. Fix before telling anyone this shipped." >&2

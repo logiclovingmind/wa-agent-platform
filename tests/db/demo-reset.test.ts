@@ -213,4 +213,136 @@ describe("demo_reset", () => {
     expect(after.orgB.name).not.toBe("Demo Institute");
   });
 
+  // The reset is a delete, so the overlay it deletes has to land somewhere first or a
+  // demo is a one-way door. Asserted in the same call as the deletes rather than on its
+  // own, because "saved" only counts if it happened *before* the rows went.
+  it("saves the walk-in overlay before deleting it", async () => {
+    const saved = await asUser(db, admin, async () => {
+      const row = (
+        await db.query<{ setup_saved: string | null }>("select * from public.demo_reset()")
+      ).rows[0]!;
+
+      await db.query("set local role postgres");
+      const setups = (
+        await db.query<{ label: string; name: string; sector: string; kb: KbDoc[] }>(
+          "select label, name, sector, kb from demo_setups where org_id = $1",
+          [fx.orgA],
+        )
+      ).rows;
+      return { row, setups };
+    });
+
+    expect(saved.setups).toHaveLength(1);
+    const setup = saved.setups[0]!;
+
+    // Auto-labelled from the org's name at reset time — which is the prospect's business,
+    // not "Demo Institute". That is the only thing making the list readable a week later.
+    expect(setup.label).toMatch(/^Sharma Dental — /);
+    expect(saved.row.setup_saved).toBe(setup.label);
+
+    expect(setup.name).toBe("Sharma Dental");
+    expect(setup.sector).toBe("healthcare");
+    expect(setup.kb).toEqual([{ title: "Sharma Dental — fees", raw: "pasted for a prospect" }]);
+  });
+
+  // Pressing reset on a demo nobody ran would otherwise file a "Demo Institute" row every
+  // time, and the list this feature exists to provide becomes unreadable within a week.
+  it("files nothing when the walk-in pasted no KB", async () => {
+    const filed = await asUser(db, admin, async () => {
+      await db.query("set local role postgres");
+      await db.query("delete from kb_documents where org_id = $1", [fx.orgA]);
+      await db.query("select app.demo_restore_defaults()");
+
+      await db.query("set local role authenticated");
+      await db.query("select * from public.demo_reset()");
+
+      await db.query("set local role postgres");
+      return (await db.query("select 1 from demo_setups where org_id = $1", [fx.orgA])).rowCount;
+    });
+
+    expect(filed).toBe(0);
+  });
+});
+
+interface KbDoc {
+  title: string;
+  raw: string;
+}
+
+describe("demo_setup_save and demo_setup_load", () => {
+  it("are unreachable by anon", async () => {
+    await db.query("set role anon");
+    await expect(db.query("select public.demo_setup_save('x')")).rejects.toThrow(
+      /permission denied/i,
+    );
+    await expect(
+      db.query("select public.demo_setup_load('00000000-0000-0000-0000-000000000000')"),
+    ).rejects.toThrow(/permission denied/i);
+    await db.query("reset role");
+  });
+
+  it("refuse a client owner", async () => {
+    await expect(
+      asUser(db, fx.userA, () => db.query("select public.demo_setup_save('x')")),
+    ).rejects.toThrow(/admin only/i);
+  });
+
+  it("save names the setup and load puts the whole overlay back", async () => {
+    const after = await asUser(db, admin, async () => {
+      const id = (
+        await db.query<{ demo_setup_save: string }>("select public.demo_setup_save($1)", [
+          "Sharma Dental, first visit",
+        ])
+      ).rows[0]!.demo_setup_save;
+
+      // Everything the reset does, so the load below is restoring rather than no-opping.
+      await db.query("select * from public.demo_reset()");
+      await db.query("select public.demo_setup_load($1)", [id]);
+
+      await db.query("set local role postgres");
+      return {
+        org: (
+          await db.query<{ name: string; sector: string; voice: string; reply_max_words: number }>(
+            "select name, sector, voice, reply_max_words from organizations where id = $1",
+            [fx.orgA],
+          )
+        ).rows[0]!,
+        kb: (
+          await db.query<KbDoc>(
+            "select title, raw from kb_documents where org_id = $1 order by title",
+            [fx.orgA],
+          )
+        ).rows,
+        label: (
+          await db.query<{ label: string }>("select label from demo_setups where id = $1", [id])
+        ).rows[0]!.label,
+      };
+    });
+
+    expect(after.label).toBe("Sharma Dental, first visit");
+    expect(after.org.name).toBe("Sharma Dental");
+    expect(after.org.sector).toBe("healthcare");
+    expect(after.org.voice).toBe("clinical");
+
+    // Replaced, not merged. A load that left the seeded backdrop in place would put a
+    // coaching institute's fees in the same prompt as a dentist's.
+    expect(after.kb).toEqual([{ title: "Sharma Dental — fees", raw: "pasted for a prospect" }]);
+  });
+
+  it("refuses a setup id belonging to another org", async () => {
+    await expect(
+      asUser(db, admin, async () => {
+        await db.query("set local role postgres");
+        const id = (
+          await db.query<{ id: string }>(
+            `insert into demo_setups (org_id, label, name, sector)
+             values ($1, 'orgB overlay', 'Paying Client', 'general') returning id`,
+            [fx.orgB],
+          )
+        ).rows[0]!.id;
+        await db.query("set local role authenticated");
+        return db.query("select public.demo_setup_load($1)", [id]);
+      }),
+    ).rejects.toThrow(/no such setup/i);
+  });
 });

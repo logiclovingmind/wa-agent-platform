@@ -61,6 +61,10 @@ Three things worth showing, in this order:
 - **It answers as them.** Their prices, their hours, their tone. Ask something the KB
   does not cover and let them watch it decline to invent an answer — that is the feature,
   not a gap.
+- **It books.** Ask for an appointment. It offers real free times from the **Diary** panel
+  beside the KB — 9:30 to 7, Monday to Saturday, in half hours — takes the one they pick,
+  and the booking appears under **Booked** while you are both looking at it. Worth saying
+  out loud: it can only offer times that are actually free, and it cannot invent one.
 - **A human can cut in.** Open the Inbox on your laptop, take over the conversation, type
   a reply as yourself. The bot stops; it resumes on its own after thirty minutes idle.
 - **What it costs and what it catches.** The training console shows ₹ per reply. **All
@@ -74,8 +78,8 @@ Not the **Clear chat** button in the training console — that only empties the 
 on screen. If the business name still reads like the prospect's, the reset has not run.
 
 It reports what it removed, and it always restores the same thing: **Demo Institute**,
-sector `general`, the seeded tone and languages, and the two `Demo — …` documents. Never
-the previous prospect's values.
+sector `general`, the seeded tone and languages, the two `Demo — …` documents, and an
+empty diary behind the seeded week of hours. Never the previous prospect's values.
 
 | Gone | Kept |
 |---|---|
@@ -83,6 +87,7 @@ the previous prospect's values.
 | Threads from your handset, with their messages, leads and flags | The 1,000 seeded conversations |
 | What the demo cost — the sandbox replies and console runs | The seeded month of spend |
 | Their name, tone, languages, reply length | — |
+| Every appointment booked during the demo | The seeded week of hours, put back |
 
 Two things it does not reach: **images** the prospect sent are still in Storage
 (`pnpm tsx scripts/demo-media.ts --remove` clears demo objects), and `audit_log` keeps

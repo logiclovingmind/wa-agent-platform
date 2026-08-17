@@ -316,6 +316,68 @@ export async function kbDelete(orgId: string, docId: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
+/**
+ * The diary. Admin-only through the Worker for the same reason as the KB above: every
+ * `business_hours` policy is `app.is_owner`, and this account is in no org.
+ */
+export interface HoursRow {
+  /** Postgres `dow`: 0 is Sunday. */
+  weekday: number;
+  /** `HH:MM` in IST. */
+  opens_at: string;
+  closes_at: string;
+  slot_minutes: number;
+}
+
+export interface Appointment {
+  id: string;
+  starts_at: string;
+  duration_minutes: number;
+  customer_name: string | null;
+  service: string | null;
+  status: string;
+  /** `block` is time the owner marked unavailable, not a customer. */
+  kind: string;
+}
+
+export interface Diary {
+  hours: Array<HoursRow & { id: string }>;
+  /** Ahead of now only, soonest first. */
+  appointments: Appointment[];
+}
+
+export async function diary(orgId: string): Promise<Diary> {
+  const res = await authedGet(`/api/admin/hours/${orgId}`);
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as Diary;
+}
+
+/** Replaces the whole week. A day left out of `hours` is a day the client is closed. */
+export async function setHours(orgId: string, hours: HoursRow[]): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("signed out");
+
+  const res = await fetch(`${BASE}/api/admin/hours/${orgId}`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ hours }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function cancelAppointment(orgId: string, id: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("signed out");
+
+  const res = await fetch(`${BASE}/api/admin/appointments/${orgId}/${id}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 /** One turn of browser-held console history. Never persisted anywhere. */
 export interface ConsoleTurn {
   direction: "inbound" | "outbound";
@@ -333,6 +395,10 @@ export interface ConsoleRun {
   costMicros: number;
   usage: { promptTokens: number; completionTokens: number } | null;
   kbBytes: number;
+  /** How many free times the prompt carried. Zero means this client has no diary. */
+  slotsOffered: number;
+  /** The slot the model chose. The console never takes it — see the route. */
+  booking: string | null;
   sector: string;
   voice: string | null;
   replyMaxWords: number | null;

@@ -1,4 +1,4 @@
-import { complete, type Lead, type LlmEnv } from "./llm.js";
+import { complete, type BookingRequest, type Lead, type LlmEnv } from "./llm.js";
 import { buildMessages, type ChatMessage, type PromptTurn } from "./prompt.js";
 import {
   assertSingleReply,
@@ -94,6 +94,8 @@ export interface PromptContext {
   voice?: string | null | undefined;
   replyMaxWords?: number | null | undefined;
   languages?: string | null | undefined;
+  /** Free slots as IST labels. Absent or empty on a client with no `business_hours`. */
+  slots?: string[] | undefined;
 }
 
 export interface ReplyUsage {
@@ -153,6 +155,13 @@ export type ReplyVerdict =
        * extraction to keep either.
        */
       lead?: Lead;
+      /**
+       * The slot the model chose, still just the label it was offered. Taking it is the
+       * caller's job and can fail — the label may be one nobody offered, or someone else
+       * may have taken it since the prompt was built — so this is a request, not a fact.
+       * The confirmation in `text` is only true once the caller has booked it.
+       */
+      booking?: BookingRequest;
     };
 
 export interface DecideInput {
@@ -222,6 +231,7 @@ export async function decideReply(env: LlmEnv, input: DecideInput): Promise<Repl
     voice: context.voice,
     replyMaxWords: context.replyMaxWords,
     languages: context.languages,
+    slots: context.slots,
   });
 
   let completion;
@@ -268,5 +278,10 @@ export async function decideReply(env: LlmEnv, input: DecideInput): Promise<Repl
     usage,
     messages,
     ...(completion.lead ? { lead: completion.lead } : {}),
+    // Only when slots were actually offered. A model that invents a `booking` on a client
+    // with no diary must not reach the booking path at all.
+    ...(completion.booking && (context.slots?.length ?? 0) > 0
+      ? { booking: completion.booking }
+      : {}),
   };
 }

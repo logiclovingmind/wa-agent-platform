@@ -109,8 +109,15 @@ export default function Thread({
           filter: `conversation_id=eq.${id}`,
         },
         (payload) => {
-          const row = payload.new as Message;
-          setMessages((prev) => merge(prev, [row]));
+          // A DELETE arrives with `new` set to `{}` — the row that no longer exists. It
+          // used to be merged in anyway, and `merge` sorts on `created_at`, so the sort
+          // read a property of undefined and threw inside the state updater. There is no
+          // error boundary above this, so the whole dashboard went white and only a
+          // reload brought it back. Erasing an unflagged conversation deletes its
+          // messages, which is why it happened on every erase.
+          const row = payload.new as Partial<Message>;
+          if (!row.id || !row.created_at) return;
+          setMessages((prev) => merge(prev, [row as Message]));
         },
       )
       .subscribe();

@@ -53,6 +53,35 @@ function hhmm(value: string): number | null {
   return hours * 60 + mins;
 }
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * An appointment slot as the customer should read it: "Mon 18 Aug, 10:30 am".
+ *
+ * This label is also the identifier. The model is offered a list of these, may only echo
+ * one back, and the caller resolves it through the same list — so the format has to be
+ * stable, and a change here is a change to the matching key, not just to presentation.
+ *
+ * Arithmetic rather than `Intl.DateTimeFormat`, for the same reason as `isWithinHours`
+ * above: this runs on the reply path against a 10ms budget, and IST never shifts.
+ */
+export function istSlotLabel(at: Date): string {
+  const ist = new Date(at.getTime() + IST_OFFSET_MINUTES * 60_000);
+
+  const hours24 = ist.getUTCHours();
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  const minutes = String(ist.getUTCMinutes()).padStart(2, "0");
+
+  return (
+    `${DAY_NAMES[ist.getUTCDay()]} ${ist.getUTCDate()} ${MONTH_NAMES[ist.getUTCMonth()]}, ` +
+    `${hours12}:${minutes} ${hours24 < 12 ? "am" : "pm"}`
+  );
+}
+
 /** Meta sends timestamps as epoch seconds in a string. */
 export function parseMetaTimestamp(timestamp: string): Date {
   return new Date(Number(timestamp) * 1000);

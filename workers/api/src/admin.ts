@@ -7,7 +7,10 @@ import {
   HISTORY_LIMIT,
   HOLD_TEXT,
   KB_DOC_LIMIT,
+  SLOT_DAYS,
+  SLOT_LIMIT,
   holdFor,
+  istSlotLabel,
   listMedia,
   removeMedia,
   type OrgControls,
@@ -1162,11 +1165,25 @@ admin.post("/api/admin/console/:orgId", async (c) => {
   });
   const override = body["overrideHold"] === true;
 
-  const { data: docs } = await db
-    .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
-    .order("created_at", { ascending: true })
-    .returns<Array<{ raw: string }>>();
+  // Both halves of the prompt at once, read exactly as the DO reads them. The slots
+  // especially: leaving them out here would hand the console a prompt with no availability
+  // block, so it would decline to offer a time the live bot offers happily — and a console
+  // that disagrees with the DO is the one failure it cannot have.
+  const [{ data: docs }, { data: slotRows }] = await Promise.all([
+    db
+      .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
+      .order("created_at", { ascending: true })
+      .returns<Array<{ raw: string }>>(),
+    createServiceClient(c.env).rpc("free_slots", {
+      p_org_id: orgId,
+      p_days: SLOT_DAYS,
+      p_limit: SLOT_LIMIT,
+    }),
+  ]);
   const kb = (docs ?? []).map((d) => d.raw).join("\n\n");
+  const slots = ((slotRows ?? []) as Array<{ starts_at: string }>).map((row) =>
+    istSlotLabel(new Date(row.starts_at)),
+  );
 
   const verdict = await decideReply(c.env, {
     customerText: text,
@@ -1181,6 +1198,7 @@ admin.post("/api/admin/console/:orgId", async (c) => {
       voice: org.voice,
       replyMaxWords: org.reply_max_words,
       languages: org.languages,
+      slots,
     }),
   });
 
@@ -1224,6 +1242,15 @@ admin.post("/api/admin/console/:orgId", async (c) => {
     costMicros: cost,
     usage: usage ?? null,
     kbBytes: kb.length,
+    slotsOffered: slots.length,
+    /**
+     * The slot the model picked, reported and **not taken**. Booking is the caller's job
+     * and this caller deliberately has none: the console writes two rows and neither is an
+     * appointment, so holding a real time for a customer who does not exist is not
+     * something it may do. The reply above therefore says "confirmed" while the diary is
+     * untouched, which is worth showing rather than hiding.
+     */
+    booking: verdict.action === "send" ? (verdict.booking?.slot ?? null) : null,
     sector: org.sector,
     voice: org.voice,
     replyMaxWords: org.reply_max_words,
@@ -1251,4 +1278,154 @@ function consoleHistory(v: unknown): PromptTurn[] | null {
     turns.push({ direction, body });
   }
   return turns;
+}
+
+/**
+ * The diary — business hours in, booked appointments out.
+ *
+ * A Worker route rather than a browser write for the same reason as the KB editor above:
+ * every policy on `business_hours` is `app.is_owner(org_id)`, and the platform admin
+ * deliberately holds no `org_members` row. `service_role` here, scoped by `OrgDb`.
+ *
+ * The console offers one window per weekday. The table allows several — a clinic that
+ * shuts for lunch is two rows — but a second window is not worth a repeating-row editor
+ * until a client asks for one, and `PUT` below replaces the whole week, so adding the
+ * capability later cannot corrupt what is already stored.
+ */
+interface HoursRow {
+  id: string;
+  weekday: number;
+  opens_at: string;
+  closes_at: string;
+  slot_minutes: number;
+}
+
+const HOURS_COLUMNS = "id,weekday,opens_at,closes_at,slot_minutes";
+const APPOINTMENT_COLUMNS = "id,starts_at,duration_minutes,customer_name,service,status,kind";
+
+admin.get("/api/admin/hours/:orgId", async (c) => {
+  const db = createOrgDb(c.env, c.req.param("orgId"));
+
+  // Together: neither read depends on the other and the panel shows both at once.
+  const [hours, appointments] = await Promise.all([
+    db.select("business_hours", HOURS_COLUMNS).order("weekday", { ascending: true })
+      .returns<HoursRow[]>(),
+    db
+      .select("appointments", APPOINTMENT_COLUMNS)
+      // Only what is still ahead and still standing. A diary is a thing you act on: last
+      // month's bookings are egress nobody reads, and a cancelled row is a slot that is
+      // free again everywhere else, so listing it here is the one place it looks taken.
+      .gte("starts_at", new Date().toISOString())
+      .neq("status", "cancelled")
+      .order("starts_at", { ascending: true })
+      .returns<Array<Record<string, unknown>>>(),
+  ]);
+
+  if (hours.error) throw new Error(`business_hours read failed: ${hours.error.message}`);
+  if (appointments.error) {
+    throw new Error(`appointments read failed: ${appointments.error.message}`);
+  }
+
+  return c.json({ hours: hours.data ?? [], appointments: appointments.data ?? [] });
+});
+
+/**
+ * Replaces the whole week in one call.
+ *
+ * Replace rather than merge because the editor is a week-shaped form: it always knows
+ * every day, and "Sunday is now closed" is expressed by that day being absent. A merge
+ * would need a separate delete for it and could not express closing a day at all.
+ *
+ * Booked appointments are deliberately untouched. Narrowing the hours must not silently
+ * cancel a customer who already holds a slot — those stay in the diary, and the owner
+ * decides what to do about them.
+ */
+admin.put("/api/admin/hours/:orgId", async (c) => {
+  const orgId = c.req.param("orgId");
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+
+  const rows = parseHours(body?.["hours"]);
+  if (rows === null) return c.json({ error: "invalid hours" }, 400);
+
+  const db = createOrgDb(c.env, orgId);
+
+  // `OrgDb.delete` already carries `.eq("org_id", ...)`, which is both invariant 2 and
+  // the filter PostgREST insists on before it will accept a delete at all.
+  const cleared = await db.delete("business_hours");
+  if (cleared.error) throw new Error(`business_hours clear failed: ${cleared.error.message}`);
+
+  if (rows.length > 0) {
+    const { error } = await db.insert("business_hours", rows);
+    if (error) throw new Error(`business_hours insert failed: ${error.message}`);
+  }
+
+  const { error: auditError } = await db.insert("audit_log", {
+    actor_user_id: c.get("caller").userId,
+    action: "business_hours_set",
+    detail: { days: rows.length },
+  });
+  if (auditError) throw new Error(`audit_log insert failed: ${auditError.message}`);
+
+  return c.json({ hours: rows.length });
+});
+
+/**
+ * Cancels a booking. Never deletes it: `free_slots` treats a cancelled row as free again,
+ * and the row is the only record that this customer was ever told they had this time.
+ */
+admin.delete("/api/admin/appointments/:orgId/:id", async (c) => {
+  const db = createOrgDb(c.env, c.req.param("orgId"));
+
+  const { data, error } = await db
+    .update("appointments", { status: "cancelled" })
+    .eq("id", c.req.param("id"))
+    .select(APPOINTMENT_COLUMNS)
+    .maybeSingle<{ id: string; starts_at: string }>();
+  if (error) throw new Error(`appointment cancel failed: ${error.message}`);
+  if (!data) return c.json({ error: "unknown appointment" }, 404);
+
+  const { error: auditError } = await db.insert("audit_log", {
+    actor_user_id: c.get("caller").userId,
+    action: "appointment_cancelled",
+    detail: { appointment_id: data.id, starts_at: data.starts_at },
+  });
+  if (auditError) throw new Error(`audit_log insert failed: ${auditError.message}`);
+
+  return c.json({ cancelled: data.id });
+});
+
+/**
+ * All seven days or nothing. A half-valid week that saved the good days and dropped the
+ * rest would leave the form disagreeing with the diary, which is exactly the bug the
+ * whole-week replace exists to avoid.
+ */
+function parseHours(value: unknown): Array<Omit<HoursRow, "id">> | null {
+  if (!Array.isArray(value) || value.length > 7) return null;
+
+  const rows: Array<Omit<HoursRow, "id">> = [];
+  const seen = new Set<number>();
+
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const row = raw as Record<string, unknown>;
+
+    const weekday = Number(row["weekday"]);
+    const slot = Number(row["slot_minutes"]);
+    const opens = row["opens_at"];
+    const closes = row["closes_at"];
+
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) return null;
+    if (seen.has(weekday)) return null;
+    if (!Number.isInteger(slot) || slot < 5 || slot > 240) return null;
+    if (typeof opens !== "string" || typeof closes !== "string") return null;
+    if (!/^\d{2}:\d{2}$/.test(opens) || !/^\d{2}:\d{2}$/.test(closes)) return null;
+    // The table has the same check. Rejecting here too turns a 500 into a message the
+    // person typing it can act on.
+    if (closes <= opens) return null;
+
+    seen.add(weekday);
+    rows.push({ weekday, opens_at: opens, closes_at: closes, slot_minutes: slot });
+  }
+
+  return rows;
 }

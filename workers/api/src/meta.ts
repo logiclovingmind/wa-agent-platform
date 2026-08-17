@@ -78,6 +78,50 @@ export async function sendText(
   });
 }
 
+/**
+ * Blue ticks, and optionally the typing indicator.
+ *
+ * Meta bundles the two: the typing indicator rides on the read receipt, so there is no
+ * way to show one without sending the other. `typing` is therefore opt-in per call rather
+ * than always on — Meta asks that it only be shown when a reply really is coming, and it
+ * would be a lie on a turn the bot is not going to answer.
+ *
+ * The indicator clears itself after 25 seconds or when the reply lands, whichever comes
+ * first, so nothing has to switch it off.
+ *
+ * Never throws, and does not use `metaSend`: the response here is `{"success": true}`
+ * with no message id, and more importantly a blue tick is cosmetic. This runs in front of
+ * the reply the customer is actually waiting on, and a Meta blip must not cost them that.
+ */
+export async function markRead(
+  env: Env,
+  target: SendTarget,
+  waMessageId: string,
+  typing = false,
+): Promise<void> {
+  try {
+    const token = await decryptSecret(
+      env,
+      target.tokenCiphertext,
+      target.tokenIv,
+      target.tokenKeyVersion,
+    );
+
+    await fetch(`${env.META_GRAPH_URL}/${target.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: waMessageId,
+        ...(typing ? { typing_indicator: { type: "text" } } : {}),
+      }),
+    });
+  } catch {
+    // Deliberately swallowed. See above: this is decoration on the reply path.
+  }
+}
+
 /** Returns the sent wa_message_id. Throws on anything Meta did not accept. */
 async function metaSend(env: Env, target: SendTarget, payload: unknown): Promise<string> {
   const token = await decryptSecret(

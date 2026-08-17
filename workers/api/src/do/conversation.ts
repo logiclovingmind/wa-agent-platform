@@ -9,6 +9,7 @@ import {
   HOLD_TEXT,
   holdFor,
   isWindowOpen,
+  istSlotLabel,
   KB_DOC_LIMIT,
   listMedia,
   mediaPath,
@@ -17,7 +18,11 @@ import {
   removeMedia,
   SAFE_REPLY,
   signMediaUrl,
+  SLOT_DAYS,
+  SLOT_LIMIT,
+  SLOT_TAKEN_REPLY,
   windowExpiresAt,
+  type BookingRequest,
   type Completion,
   type ImageFlags,
   type Lead,
@@ -28,10 +33,32 @@ import {
   type SafetyKind,
 } from "@wa/shared";
 import type { Env } from "../env.js";
-import { downloadMedia, sendTemplate, sendText, type SendTarget } from "../meta.js";
+import {
+  downloadMedia,
+  markRead,
+  sendTemplate,
+  sendText,
+  type SendTarget,
+} from "../meta.js";
 
-/** DO alarms retry with backoff; cron does not. That is why debounce lives here. */
-export const DEBOUNCE_MS = 4_000;
+/**
+ * DO alarms retry with backoff; cron does not. That is why debounce lives here.
+ *
+ * How long to keep waiting after the *last* message in a burst. It was a flat 4s from
+ * the first message, which every single-message turn paid in full — 4s of the ~8s a
+ * customer waited was this constant. The wait now restarts on each new message instead,
+ * so a burst still collects into one reply (invariant 5) while a lone "what are your
+ * fees?" goes to the model in 1.5s.
+ */
+export const DEBOUNCE_MS = 1_500;
+
+/**
+ * The ceiling, measured from the first message of the burst. Without it, a customer
+ * typing steadily every second would push the reply out indefinitely — which is the
+ * failure the original flat deadline existed to prevent. Unchanged at 4s, so no burst
+ * waits longer than it did before this became adaptive.
+ */
+export const DEBOUNCE_MAX_MS = 4_000;
 
 /** Auto-return to the bot after this much human silence. */
 export const HANDOFF_IDLE_MS = 30 * 60 * 1000;
@@ -73,6 +100,13 @@ export interface InboundMessage {
  */
 export class ConversationDO extends DurableObject<Env> {
   #sql: SqlStorage;
+
+  /**
+   * The slots offered to the model this invocation, label -> ISO instant. Populated by
+   * `#promptContext` and read by `#book`, so it never outlives the turn that built it —
+   * which is what stops a stale offer being booked against a later reply.
+   */
+  #slots = new Map<string, string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -343,10 +377,29 @@ export class ConversationDO extends DurableObject<Env> {
   // --- debounce --------------------------------------------------------------
 
   async #scheduleDebounce(): Promise<void> {
-    // A batch already forming keeps its original deadline, so a customer typing in
-    // bursts cannot push the reply out indefinitely.
-    if (this.#getNum("debounce_at") !== null) return;
-    this.#set("debounce_at", String(Date.now() + DEBOUNCE_MS));
+    const now = Date.now();
+    const open = this.#getNum("debounce_at");
+
+    if (open === null) {
+      // First message of a burst. `batch_started_at` is what the ceiling below is
+      // measured from, so it is written once per batch and cleared when the batch flushes.
+      this.#set("batch_started_at", String(now));
+      this.#set("debounce_at", String(now + DEBOUNCE_MS));
+      await this.#reschedule();
+      return;
+    }
+
+    // Each further message restarts the wait, but never past the ceiling. Clamping to the
+    // ceiling rather than refusing to extend keeps the two cases in one expression: a
+    // burst that has already run 4s simply stops moving its own deadline.
+    const started = this.#getNum("batch_started_at") ?? now;
+    const next = Math.min(now + DEBOUNCE_MS, started + DEBOUNCE_MAX_MS);
+
+    // A deadline that did not move must not re-arm the alarm: setAlarm() on every inbound
+    // message of a long burst is storage writes we are not obliged to spend.
+    if (next <= open) return;
+
+    this.#set("debounce_at", String(next));
     await this.#reschedule();
   }
 
@@ -374,6 +427,9 @@ export class ConversationDO extends DurableObject<Env> {
     const debounceAt = this.#getNum("debounce_at");
     if (debounceAt !== null && debounceAt <= now) {
       this.#del("debounce_at");
+      // Cleared with the deadline, or the next burst measures its ceiling from this one's
+      // first message and flushes early.
+      this.#del("batch_started_at");
       await this.#flushBatch();
     }
 
@@ -395,26 +451,46 @@ export class ConversationDO extends DurableObject<Env> {
     if (batch.length === 0) return;
     this.#set("last_batch_size", String(batch.length));
 
-    // A human holding the conversation reads the inbox; the bot stays quiet.
-    if (!this.#canBotReply()) return;
-
     // The whole burst is answered once, and the claim is against its last id: that is
     // the id a Meta retry of the same burst would carry.
     const customerText = batch
       .map((row) => row["body"] as string | null)
       .filter((body): body is string => Boolean(body))
       .join("\n");
-    const anchor = batch[batch.length - 1]!["wa_message_id"] as string;
+    const last = batch[batch.length - 1]!;
+    const anchor = last["wa_message_id"] as string;
 
     // Meta rejects free-form messages outside the 24h window, and every inbound resets
     // it, so this only fires on stale processing — a burst answered long after it was
     // sent. A template is the only thing that may legally go out (the #1 "why no
     // reply?"), and it cannot carry the reply, so the handoff stands either way.
-    const last = batch[batch.length - 1]!;
-    if (!isWindowOpen(new Date(), windowExpiresAt(new Date(last["sent_at"] as number)))) {
+    const windowOpen = isWindowOpen(
+      new Date(),
+      windowExpiresAt(new Date(last["sent_at"] as number)),
+    );
+    const replying = this.#canBotReply() && windowOpen;
+
+    // One call for the burst, not one per message: marking the last id read marks the
+    // earlier ones with it. The blue tick is honest on every path — the message did
+    // arrive, and a human holding the conversation is reading the inbox. The typing
+    // bubble is not, so it only rides along when a model reply is actually coming.
+    const receipt = this.#markRead(anchor, replying);
+
+    // A human holding the conversation reads the inbox; the bot stays quiet.
+    if (!this.#canBotReply()) {
+      await receipt;
+      return;
+    }
+
+    if (!windowOpen) {
+      await receipt;
       await this.#reengage(anchor, customerText);
       return;
     }
+
+    // Not awaited: #reply keeps the invocation alive, and the customer should not wait
+    // a Supabase lookup plus a Meta round trip for a decoration.
+    void receipt;
 
     await this.#reply(
       anchor,
@@ -457,9 +533,28 @@ export class ConversationDO extends DurableObject<Env> {
         await this.#sendAndHandoff(anchor, verdict.text);
         return;
       case "send": {
+        // The claim comes first, exactly as in `#send`, and for the same reason — but it
+        // has to be taken here rather than inside it, because the booking below must sit
+        // *between* the claim and the send. A retry of this whole path must not book a
+        // second slot any more than it may send a second message.
+        if (!(await this.claimReply(anchor))) return;
+
+        // Booked before the confirmation is sent, never after. `verdict.text` already
+        // says "you're booked"; if the slot cannot be taken then that sentence is false
+        // and must not reach the customer, so the model's words are discarded here.
+        //
+        // The reverse ordering fails much worse than this one. A booking with no
+        // confirmation shows up in the owner's diary and gets a phone call; a
+        // confirmation with no booking is two people in one chair.
+        if (verdict.booking && !(await this.#book(verdict.booking))) {
+          await this.#deliver(SLOT_TAKEN_REPLY);
+          await this.requestHandoff();
+          return;
+        }
+
         // Billed only when the reply actually went out: a replayed burst where the claim
         // is already set sends nothing, and must not bill twice.
-        const sent = await this.#send(anchor, verdict.text);
+        const sent = await this.#deliver(verdict.text);
         if (sent) {
           await this.#recordUsage(verdict.usage);
           if (verdict.lead) await this.#recordLead(verdict.lead);
@@ -467,6 +562,36 @@ export class ConversationDO extends DurableObject<Env> {
         return;
       }
     }
+  }
+
+  /**
+   * Takes the slot the model chose. False means the confirmation it wrote is not true.
+   *
+   * Two ways to fail, treated identically because the customer-facing outcome is the
+   * same: the label is not one we offered this turn (so it never becomes a time at all),
+   * or `book_appointment` returned null — the slot moved, or was never on the grid. The
+   * SQL is the arbiter of the second, because two conversations are two Durable Objects
+   * and nothing in this process can serialise them.
+   */
+  async #book(booking: BookingRequest): Promise<boolean> {
+    const startsAt = this.#slots.get(booking.slot.trim());
+    if (!startsAt) return false;
+
+    const orgId = this.#get("org_id");
+    const conversationId = this.#get("conversation_id");
+    if (!orgId) return false;
+
+    const { data, error } = await createServiceClient(this.env).rpc("book_appointment", {
+      p_org_id: orgId,
+      p_conversation_id: conversationId,
+      p_starts_at: startsAt,
+      p_name: booking.name ?? null,
+      p_service: booking.service ?? null,
+    });
+
+    // A failed call is not a booking. Saying so costs the customer a person, which is
+    // recoverable; assuming it worked costs the clinic a double booking, which is not.
+    return !error && data !== null;
   }
 
   /** A flagged turn gets the constant string, a safety_flags row, and a human. */
@@ -712,15 +837,34 @@ export class ConversationDO extends DurableObject<Env> {
     // Ordered, not just limited: without it PostgREST picks any five, so which documents
     // the bot knows would change under it and the KB editor's "these five reach the
     // prompt" would be a guess.
-    const { data: docs } = await db
-      .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
-      .order("created_at", { ascending: true })
-      .returns<Array<{ raw: string }>>();
-    const { data: history } = await db
-      .select("messages", "direction,body", { limit: HISTORY_LIMIT })
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .returns<PromptTurn[]>();
+    // Together, not one after the other. Neither read depends on the other, and both sit
+    // between the customer's message and the model call — awaiting them in sequence spent
+    // a whole Supabase round trip of the customer's wait for nothing. Waiting is I/O, so
+    // overlapping it costs no CPU against the 10ms budget.
+    const [{ data: docs }, { data: history }, { data: slotRows }] = await Promise.all([
+      db
+        .select("kb_documents", "raw", { limit: KB_DOC_LIMIT })
+        .order("created_at", { ascending: true })
+        .returns<Array<{ raw: string }>>(),
+      db
+        .select("messages", "direction,body", { limit: HISTORY_LIMIT })
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .returns<PromptTurn[]>(),
+      // Answers an empty set for a client with no `business_hours`, which is every client
+      // until one configures a diary — so this costs a row-less round trip rather than a
+      // branch, and it overlaps the two reads above instead of adding to the wait.
+      createServiceClient(this.env)
+        .rpc("free_slots", { p_org_id: orgId, p_days: SLOT_DAYS, p_limit: SLOT_LIMIT }),
+    ]);
+
+    // Label -> instant, held for the rest of this invocation. The model may only echo a
+    // label back, and `#book` resolves it through this exact map: a slot the model
+    // invented is simply not a key, so it cannot be booked.
+    const offered = (slotRows ?? []) as Array<{ starts_at: string }>;
+    this.#slots = new Map(
+      offered.map((row) => [istSlotLabel(new Date(row.starts_at)), row.starts_at]),
+    );
 
     return {
       businessName: orgRow?.name ?? "the business",
@@ -733,6 +877,7 @@ export class ConversationDO extends DurableObject<Env> {
       voice: orgRow?.voice ?? null,
       replyMaxWords: orgRow?.reply_max_words ?? null,
       languages: orgRow?.languages ?? null,
+      slots: [...this.#slots.keys()],
     };
   }
 
@@ -748,6 +893,21 @@ export class ConversationDO extends DurableObject<Env> {
       return error ? null : Number(data ?? 0);
     });
     return reason ? HOLD_TEXT[reason] : null;
+  }
+
+  /**
+   * Blue tick, and the typing bubble when a reply is on its way. Never throws:
+   * `#sendTarget` reaches Supabase and `markRead` reaches Meta, and neither is worth
+   * costing the customer the reply they are waiting on.
+   */
+  async #markRead(waMessageId: string, typing: boolean): Promise<void> {
+    try {
+      const target = await this.#sendTarget();
+      if (!target) return;
+      await markRead(this.env, target.send, waMessageId, typing);
+    } catch {
+      // See above.
+    }
   }
 
   async #sendTarget(): Promise<{

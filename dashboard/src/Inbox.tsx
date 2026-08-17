@@ -119,14 +119,22 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
     return leads.has(c.id) && c.followed_up_at === null;
   }
 
-  // Waiting conversations first, and within them the most urgent reason first. Sorting
-  // rather than only filtering, so the default view is already useful.
+  const byRecency = (a: Conversation, b: Conversation) =>
+    (b.last_message_at ?? "").localeCompare(a.last_message_at ?? "");
+
+  // Waiting conversations first, and within them the most urgent reason first.
   const ranked = [...conversations].sort((a, b) => {
     const ra = attention(a, flags.get(a.id) ?? [])?.rank ?? ATTENTION.length;
     const rb = attention(b, flags.get(b.id) ?? [])?.rank ?? ATTENTION.length;
     if (ra !== rb) return ra - rb;
-    return (b.last_message_at ?? "").localeCompare(a.last_message_at ?? "");
+    return byRecency(a, b);
   });
+
+  // "All" is the tab you watch a live conversation in, so it sorts by recency alone.
+  // Ranking it too meant every flagged thread outranked the message that just arrived —
+  // during a demo the reply landed below nine older flags and looked like it never came.
+  // The urgency ordering still exists; it belongs to the tab that promises it.
+  const recent = [...conversations].sort(byRecency);
 
   const waitingCount = conversations.filter((c) => attention(c, flags.get(c.id) ?? [])).length;
   const callbackCount = conversations.filter(owed).length;
@@ -135,7 +143,7 @@ export default function Inbox({ isOwner, jumpTo }: { isOwner: boolean; jumpTo: s
       ? ranked.filter((c) => attention(c, flags.get(c.id) ?? []))
       : filter === "callback"
         ? ranked.filter(owed)
-        : ranked;
+        : recent;
 
   async function exportCsv() {
     setExporting(true);

@@ -10,6 +10,21 @@ export const HISTORY_LIMIT = 10;
  */
 export const KB_DOC_LIMIT = 5;
 
+/**
+ * How far ahead the diary is offered, and how many slots reach the prompt.
+ *
+ * Both are deliberately small. Every slot is prompt tokens on every turn of every
+ * conversation for a client with a diary, and a customer choosing from sixty times is
+ * being given a worse experience than one choosing from twelve. A customer who wants
+ * something further out gets a person.
+ *
+ * Here rather than at either call site for the same reason as `KB_DOC_LIMIT` above: the
+ * Durable Object and the training console both build this prompt, and a console offering
+ * a different set of times than the live bot reports confidence that is false.
+ */
+export const SLOT_DAYS = 7;
+export const SLOT_LIMIT = 12;
+
 export interface PromptTurn {
   direction: "inbound" | "outbound";
   body: string | null;
@@ -36,6 +51,15 @@ export interface PromptInput {
   /** The debounced burst, already joined. Untrusted input. */
   customerText: string;
   /**
+   * Free slots as IST labels, already formatted, in order. Empty or absent means this
+   * client has no `business_hours` and the prompt says nothing about booking at all.
+   *
+   * Labels rather than dates because the label is the whole containment mechanism: the
+   * model may only echo one back verbatim, and the caller resolves it through this same
+   * list. Nothing downstream parses a time out of model output.
+   */
+  slots?: string[] | undefined;
+  /**
    * `organizations.voice` — an admin-authored tone line. Unlike the KB this is an
    * *instruction* and sits above the reference block, so it must never become
    * client-editable without the same containment the KB gets.
@@ -51,13 +75,19 @@ const SECTOR_RULES: Record<Sector, string> = {
   general: "",
   real_estate:
     "Never state a price or a possession date. Say the team will confirm those in writing.",
-  healthcare:
-    "Never diagnose, prescribe, or triage. You book and reschedule appointments and answer logistics only.",
+  // This used to end "you book and reschedule appointments", which was untrue for every
+  // client: there was no availability data anywhere in the repo, so the model had nothing
+  // to book against and either deferred or invented a time. Booking is now announced by
+  // the availability block instead, and only when there are real slots to offer — so the
+  // capability is described exactly once, and only where it exists.
+  healthcare: "Never diagnose, prescribe, or triage. Answer logistics only.",
   pharmacy:
     "Never say a product cures, treats, or relieves any condition, and never suggest a dose.",
 };
 
 export function buildSystemPrompt(input: Omit<PromptInput, "history" | "customerText">): string {
+  const slots = input.slots ?? [];
+
   return [
     `You are the WhatsApp assistant for ${input.businessName}.`,
     "",
@@ -88,7 +118,22 @@ export function buildSystemPrompt(input: Omit<PromptInput, "history" | "customer
     "",
     "Also report what the customer has told you about themselves so far, across the whole conversation. Use their words, condensed. Use \"\" for anything they have not said — never guess, and never carry over an example.",
     "",
-    'Respond with JSON only: {"reply": "...", "flags": {"minor": false, "distress": false, "out_of_scope": false}, "lead": {"name": "", "intent": "", "timeframe": "", "budget": "", "notes": ""}}',
+    // Availability is data, like the KB, but unlike the KB it is *ours* — we generated
+    // every line of it — so it does not need the containment wrapper. What it does need
+    // is the exact-copy rule: the label is how the chosen slot is resolved back to an
+    // instant, and a rephrased label books nothing.
+    ...(slots.length > 0
+      ? [
+          "These appointment times are free. They are the only times you may offer, and the only times that exist:",
+          ...slots.map((slot) => `- ${slot}`),
+          "",
+          'When the customer agrees to one, put it in "booking" copied exactly as written above. Otherwise use "" and do not mention a time that is not on the list. Never say a booking is confirmed unless you filled in "booking".',
+          "",
+        ]
+      : []),
+    slots.length > 0
+      ? 'Respond with JSON only: {"reply": "...", "flags": {"minor": false, "distress": false, "out_of_scope": false}, "lead": {"name": "", "intent": "", "timeframe": "", "budget": "", "notes": ""}, "booking": {"slot": "", "name": "", "service": ""}}'
+      : 'Respond with JSON only: {"reply": "...", "flags": {"minor": false, "distress": false, "out_of_scope": false}, "lead": {"name": "", "intent": "", "timeframe": "", "budget": "", "notes": ""}}',
   ]
     .filter((line) => line !== "")
     .join("\n");

@@ -6,6 +6,7 @@ import {
   MEDIA_REPLY,
   PAUSED_REPLY,
   SAFE_REPLY,
+  SLOT_TAKEN_REPLY,
   VIDEO_REPLY,
   type ImageFlags,
   type ModelFlags,
@@ -43,6 +44,12 @@ interface Scenario {
   };
   /** What org_month_spend() reports, for the cap check. */
   monthSpendMicros?: number;
+  /** What free_slots() offers, as ISO instants. Absent means this client has no diary. */
+  slots?: string[];
+  /** The `booking` object the model returns alongside its reply. */
+  booking?: { slot: string; name?: string; service?: string };
+  /** What book_appointment() answers. `null` is the lost-race / not-a-slot case. */
+  bookResult?: string | null;
 }
 
 interface Harness {
@@ -52,11 +59,15 @@ interface Harness {
   classified: string[];
   sent: string[];
   templates: Array<{ name: string; language: string }>;
+  /** Every book_appointment() call, in order. */
+  booked: Array<{ p_starts_at: string; p_name: string | null; p_service: string | null }>;
 }
 
 async function harness(name: string, scenario: Scenario = {}) {
   const token = await encryptUnderMasterKey("meta-token");
-  const out: Harness = { rest: [], llm: [], classified: [], sent: [], templates: [] };
+  const out: Harness = {
+    rest: [], llm: [], classified: [], sent: [], templates: [], booked: [],
+  };
 
   out.rest = stubSupabase(
     (call) => {
@@ -78,6 +89,15 @@ async function harness(name: string, scenario: Scenario = {}) {
           ];
         case "rpc/org_month_spend":
           return scenario.monthSpendMicros ?? 0;
+        case "rpc/free_slots":
+          return (scenario.slots ?? []).map((starts_at) => ({ starts_at }));
+        case "rpc/book_appointment": {
+          const body = call.body as Harness["booked"][number];
+          out.booked.push(body);
+          // `undefined` means "not configured for this scenario" and answers a plain
+          // success; only an explicit null is the lost race.
+          return scenario.bookResult === undefined ? "appt-1" : scenario.bookResult;
+        }
         case "kb_documents":
           return [{ raw: "Haircut is Rs 400. Open 9am to 8pm." }];
         case "wa_accounts":
@@ -140,6 +160,7 @@ async function harness(name: string, scenario: Scenario = {}) {
                 content: JSON.stringify({
                   reply: scenario.reply ?? "Sure, 6pm works. See you then.",
                   flags: { minor: false, distress: false, out_of_scope: false, ...scenario.flags },
+                  ...(scenario.booking ? { booking: scenario.booking } : {}),
                 }),
               },
             },
@@ -158,10 +179,15 @@ async function harness(name: string, scenario: Scenario = {}) {
 
       if (url.hostname === "graph.test") {
         const body = (await req.json()) as {
+          status?: string;
           type: string;
           text?: { body: string };
           template?: { name: string; language: { code: string } };
         };
+        // Blue tick / typing bubble. Carries no `type` at all, so it has to be taken off
+        // the front — the branches below would read it as a text send with no text.
+        if (body.status === "read") return Response.json({ success: true });
+
         if (body.type === "template") {
           out.templates.push({
             name: body.template!.name,
@@ -575,6 +601,82 @@ describe("runtime controls", () => {
     await h.conv.onInbound(inbound("wamid.p7", "are you open"));
     await flush(h.conv);
 
+    expect(h.sent).toEqual(["Sure, 6pm works. See you then."]);
+  });
+});
+
+// Booking is the one thing the model does that is a promise rather than a sentence: the
+// reply says "you're booked", and that is either true in the diary or it is a lie the
+// customer will act on. Everything here is about that gap.
+describe("booking", () => {
+  // A fixed instant so the label is stable: 2030-01-07T04:30:00Z is 10:00 am IST on a
+  // Monday. If istSlotLabel ever changes format this test fails, which is correct — the
+  // label is the matching key, not decoration.
+  const SLOT_ISO = "2030-01-07T04:30:00.000Z";
+  const SLOT_LABEL = "Mon 7 Jan, 10:00 am";
+
+  it("offers the free slots and books the one the model picks", async () => {
+    const h = await harness("book-ok", {
+      slots: [SLOT_ISO],
+      booking: { slot: SLOT_LABEL, name: "Anita", service: "cleaning" },
+      reply: "Done — you're booked for Monday at 10am.",
+    });
+    await h.conv.onInbound(inbound("wamid.b1", "monday morning please"));
+    await flush(h.conv);
+
+    // The label reached the model, and came back through the same map as an instant.
+    expect(h.llm[0]!.system).toContain(SLOT_LABEL);
+    expect(h.booked).toEqual([
+      { p_org_id: ORG, p_conversation_id: CONVERSATION, p_starts_at: SLOT_ISO,
+        p_name: "Anita", p_service: "cleaning" },
+    ]);
+    expect(h.sent).toEqual(["Done — you're booked for Monday at 10am."]);
+  });
+
+  // The containment property. The model can only ever pick from the list it was given,
+  // so an invented time is not a booking — and because it still *wrote* a confirmation,
+  // that confirmation must not go out.
+  it("books nothing when the model names a slot it was never offered", async () => {
+    const h = await harness("book-invented", {
+      slots: [SLOT_ISO],
+      booking: { slot: "Sun 6 Jan, 3:00 am" },
+      reply: "Great, you're booked for Sunday at 3am.",
+    });
+    await h.conv.onInbound(inbound("wamid.b2", "sunday 3am?"));
+    await flush(h.conv);
+
+    expect(h.booked).toEqual([]);
+    expect(h.sent).toEqual([SLOT_TAKEN_REPLY]);
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  // The race. Two conversations are two Durable Objects, so the unique index is the only
+  // thing that can settle it, and the loser is holding a written confirmation.
+  it("sends a person, not a confirmation, when the slot went to someone else", async () => {
+    const h = await harness("book-race", {
+      slots: [SLOT_ISO],
+      booking: { slot: SLOT_LABEL },
+      bookResult: null,
+      reply: "You're all set for Monday at 10am.",
+    });
+    await h.conv.onInbound(inbound("wamid.b3", "monday 10 please"));
+    await flush(h.conv);
+
+    expect(h.booked).toHaveLength(1);
+    expect(h.sent).toEqual([SLOT_TAKEN_REPLY]);
+    expect(h.sent).not.toContain("You're all set for Monday at 10am.");
+    expect((await h.conv.getState()).handoff).toBe("requested");
+  });
+
+  // Most clients have no diary. They should not be told they can book, and should not be
+  // asked for a field that has nothing to put in it.
+  it("says nothing about booking when the client has no hours configured", async () => {
+    const h = await harness("book-none");
+    await h.conv.onInbound(inbound("wamid.b4", "can I come monday"));
+    await flush(h.conv);
+
+    expect(h.llm[0]!.system).not.toContain("booking");
+    expect(h.booked).toEqual([]);
     expect(h.sent).toEqual(["Sure, 6pm works. See you then."]);
   });
 });

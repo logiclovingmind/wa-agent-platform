@@ -1,19 +1,24 @@
 import { useEffect, useState } from "react";
 import { supabase, type AdminOrg } from "./lib/supabase";
 import {
+  cancelAppointment,
   consoleRun,
+  diary,
   kbCreate,
   kbDelete,
   kbList,
   kbUpdate,
   setControls,
+  setHours,
+  type Appointment,
   type ConsoleRun,
   type ConsoleTurn,
+  type HoursRow,
   type KbDocument,
   type KbList,
   type OrgControls,
 } from "./lib/api";
-import { inr } from "./lib/utils";
+import { inr, ist } from "./lib/utils";
 
 /**
  * The training console — docs/admin-panel.md §11.
@@ -214,6 +219,7 @@ export default function Console() {
           onRenamed={() => void refreshOrgs()}
         />
         <Kb orgId={orgId} />
+        <Diary orgId={orgId} />
 
         {last && (
           <div className="mt-6 space-y-2 text-xs">
@@ -225,6 +231,14 @@ export default function Console() {
                 last.kbBytes === 0
                   ? "empty — the bot can only say it will check with the team"
                   : `${last.kbBytes.toLocaleString("en-IN")} characters`
+              }
+            />
+            <Field
+              label="Times offered"
+              value={
+                last.slotsOffered === 0
+                  ? "none — no hours set, so it cannot book"
+                  : `${last.slotsOffered} free slots`
               }
             />
             <Field
@@ -298,6 +312,10 @@ function Verdict({ run }: { run: ConsoleRun }) {
       </span>
       {run.kind && <span>flag: {run.kind}</span>}
       {run.overrodeHold && <span>hold overridden</span>}
+      {/* A real customer's slot is taken here. The console has no conversation to book
+          against and writes no appointment, so the reply says confirmed while the diary
+          beside it does not move — said out loud, because that gap looks like a bug. */}
+      {run.booking && <span className="text-amber-600">would book {run.booking} — not taken</span>}
       <span>{inr(run.costMicros)}</span>
     </div>
   );
@@ -622,6 +640,222 @@ function Kb({ orgId }: { orgId: string }) {
                 className="text-destructive"
               >
                 Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * The diary, beside the console so a week can be opened and "can I come Tuesday?" asked
+ * in the same breath — the same reason the KB is edited here.
+ *
+ * This panel is the whole reason the bot can book at all: with no row here `free_slots`
+ * returns nothing, the prompt says nothing about appointments, and the model is not
+ * allowed to invent a time. Hours in, offers out.
+ *
+ * Monday leads because a week does, not because the numbers do — `weekday` is Postgres's
+ * `dow`, where 0 is Sunday.
+ */
+const WEEK: Array<{ day: number; label: string }> = [
+  { day: 1, label: "Mon" },
+  { day: 2, label: "Tue" },
+  { day: 3, label: "Wed" },
+  { day: 4, label: "Thu" },
+  { day: 5, label: "Fri" },
+  { day: 6, label: "Sat" },
+  { day: 0, label: "Sun" },
+];
+
+const DEFAULT_OPEN = "09:00";
+const DEFAULT_CLOSE = "18:00";
+const DEFAULT_SLOT = 30;
+
+type Week = Record<number, { opens_at: string; closes_at: string } | undefined>;
+
+function Diary({ orgId }: { orgId: string }) {
+  const [week, setWeek] = useState<Week>({});
+  const [slot, setSlot] = useState(DEFAULT_SLOT);
+  const [booked, setBooked] = useState<Appointment[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setBooked(null);
+    setWeek({});
+    setDirty(false);
+    setError(null);
+    if (!orgId) return;
+
+    let live = true;
+    void diary(orgId)
+      .then((d) => live && fill(d))
+      .catch((e) => live && setError(message(e)));
+    return () => {
+      live = false;
+    };
+  }, [orgId]);
+
+  function fill(d: { hours: HoursRow[]; appointments: Appointment[] }) {
+    const next: Week = {};
+    for (const h of d.hours) {
+      // `HH:MM:SS` off Postgres, and `<input type="time">` wants `HH:MM`.
+      next[h.weekday] = { opens_at: h.opens_at.slice(0, 5), closes_at: h.closes_at.slice(0, 5) };
+    }
+    setWeek(next);
+    // The table stores a slot length per day; this form writes one for the week, because
+    // no client has yet wanted a different appointment length on a Tuesday.
+    setSlot(d.hours[0]?.slot_minutes ?? DEFAULT_SLOT);
+    setBooked(d.appointments);
+    setDirty(false);
+  }
+
+  function toggle(day: number) {
+    setWeek((w) => ({
+      ...w,
+      [day]: w[day] ? undefined : { opens_at: DEFAULT_OPEN, closes_at: DEFAULT_CLOSE },
+    }));
+    setDirty(true);
+  }
+
+  function edit(day: number, field: "opens_at" | "closes_at", value: string) {
+    setWeek((w) => {
+      const row = w[day];
+      return row ? { ...w, [day]: { ...row, [field]: value } } : w;
+    });
+    setDirty(true);
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const hours = WEEK.flatMap(({ day }) => {
+        const row = week[day];
+        return row ? [{ weekday: day, ...row, slot_minutes: slot }] : [];
+      });
+      await setHours(orgId, hours);
+      fill(await diary(orgId));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await cancelAppointment(orgId, id);
+      setBooked(await diary(orgId).then((d) => d.appointments));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const open = WEEK.filter(({ day }) => week[day]);
+  const broken = open.some(({ day }) => week[day]!.closes_at <= week[day]!.opens_at);
+
+  return (
+    <div className="mt-6 space-y-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="uppercase tracking-wide text-muted-foreground">Diary</span>
+        <span className="flex-1" />
+        <select
+          value={slot}
+          onChange={(e) => {
+            setSlot(Number(e.target.value));
+            setDirty(true);
+          }}
+          className="rounded border border-border bg-transparent px-1 py-0.5"
+        >
+          {[15, 20, 30, 45, 60].map((m) => (
+            <option key={m} value={m}>
+              {m} min
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={busy || !dirty || broken}
+          onClick={() => void save()}
+          className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+
+      <p className="text-muted-foreground">
+        {open.length === 0
+          ? "No hours set, so the bot never offers a time and cannot book. It answers questions only."
+          : `The bot offers free ${slot}-minute slots inside these hours, up to a week ahead, and books the one the customer picks.`}
+      </p>
+
+      {WEEK.map(({ day, label }) => {
+        const row = week[day];
+        return (
+          <div key={day} className="flex items-center gap-2">
+            <label className="flex w-16 items-center gap-1.5">
+              <input type="checkbox" checked={!!row} onChange={() => toggle(day)} />
+              {label}
+            </label>
+            {row ? (
+              <>
+                <input
+                  type="time"
+                  value={row.opens_at}
+                  onChange={(e) => edit(day, "opens_at", e.target.value)}
+                  className="rounded border border-border bg-transparent px-1 py-0.5"
+                />
+                <span className="text-muted-foreground">–</span>
+                <input
+                  type="time"
+                  value={row.closes_at}
+                  onChange={(e) => edit(day, "closes_at", e.target.value)}
+                  className={`rounded border bg-transparent px-1 py-0.5 ${
+                    row.closes_at <= row.opens_at ? "border-destructive" : "border-border"
+                  }`}
+                />
+              </>
+            ) : (
+              <span className="text-muted-foreground">closed</span>
+            )}
+          </div>
+        );
+      })}
+
+      {broken && <p className="text-destructive">A day has to close after it opens.</p>}
+
+      {booked && booked.length > 0 && (
+        <div className="space-y-1 pt-2">
+          <div className="uppercase tracking-wide text-muted-foreground">Booked</div>
+          {booked.map((a) => (
+            <div key={a.id} className="flex items-center gap-2">
+              <span className="flex-1 truncate">
+                {ist(a.starts_at)}
+                {" — "}
+                {a.kind === "block"
+                  ? "blocked out"
+                  : [a.customer_name, a.service].filter(Boolean).join(", ") || "no name given"}
+              </span>
+              {/* Cancelled, never deleted: the row is the only proof this customer was
+                  ever told they had this time, and `free_slots` offers it again either way. */}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void cancel(a.id)}
+                className="text-destructive"
+              >
+                Cancel
               </button>
             </div>
           ))}
