@@ -123,6 +123,7 @@ check_anon demo_setup_load "{\"p_id\":\"$NIL\"}"
 # by signature and the Worker calls it as service_role.
 check_anon free_slots "{\"p_org_id\":\"$NIL\"}"
 check_anon book_appointment "{\"p_org_id\":\"$NIL\",\"p_conversation_id\":null,\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
+check_anon reschedule_appointment "{\"p_org_id\":\"$NIL\",\"p_id\":\"$NIL\",\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
 
 if [[ "$FAILED" == true ]]; then
   echo "anon can reach a function it should not. Fix before telling anyone this shipped." >&2
