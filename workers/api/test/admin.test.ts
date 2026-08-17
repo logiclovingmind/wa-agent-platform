@@ -633,7 +633,10 @@ describe("onboarding and offboarding", () => {
   // The custom domain and the pages.dev origin are both named, because the second is
   // what a deploy prints and what still answers if DNS is in flight. A method missing
   // from the preflight fails before the handler runs, which reads as a broken route
-  // rather than a wrong CORS policy — and the panel uses PATCH and DELETE throughout.
+  // rather than a wrong CORS policy — and the panel uses PATCH and DELETE throughout, plus
+  // PUT for the diary. PUT shipped missing from the policy: every other test in this suite
+  // calls the Worker with no `origin` header, so this is the only place CORS is exercised
+  // at all, and a new method is invisible until someone clicks the button.
   it("clears the preflight for both origins and every method the panel uses", async () => {
     await harness({ admin: true });
 
@@ -641,7 +644,7 @@ describe("onboarding and offboarding", () => {
       "https://app.logiclovingmind.com",
       "https://wa-agent-dashboard.pages.dev",
     ]) {
-      for (const method of ["PATCH", "DELETE"]) {
+      for (const method of ["PUT", "PATCH", "DELETE"]) {
         const ctx = createExecutionContext();
         const res = await worker.fetch(
           new Request(`https://api.test/api/admin/orgs/${ORG_A}`, {

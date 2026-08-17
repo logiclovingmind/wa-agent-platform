@@ -24,9 +24,11 @@ api.use("/api/*", (c, next) =>
   cors({
     origin: c.env.DASHBOARD_ORIGIN.split(",").map((o) => o.trim()),
     allowHeaders: ["authorization", "content-type"],
-    // PATCH and DELETE are here because the admin panel uses both, and a missing method
-    // fails at the preflight — which looks like the route is broken, not the CORS policy.
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    // PATCH, DELETE and PUT are here because the admin panel uses all three, and a missing
+    // method fails at the *preflight* — the browser reports "Failed to fetch" with no
+    // status and nothing reaches the Worker, so it reads as a broken route rather than as
+    // a CORS policy. PUT was added for the diary editor and cost an afternoon proving it.
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   })(c, next),
 );
 
