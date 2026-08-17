@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
+import { arrivedBy, supabase } from "./lib/supabase";
 import { Activity, CalendarDays, CircleDot, type LucideIcon } from "lucide-react";
 import { cn } from "./lib/utils";
 import { Button } from "./components/ui/button";
@@ -66,7 +66,10 @@ export default function App() {
   // it may well be older than the fifty rows the list holds.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(0);
-  const [recovering, setRecovering] = useState(false);
+  // An invite is known from the URL before any event fires; recovery announces itself
+  // below. Both end in the same place — nobody gets past this with a password they have
+  // never chosen.
+  const [mustSetPassword, setMustSetPassword] = useState(arrivedBy === "invite");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -78,7 +81,7 @@ export default function App() {
       // A recovery link signs the user in before they have chosen anything, so the
       // session alone cannot tell this apart from an ordinary login. This event can
       // arrive before or after getSession resolves, hence a flag rather than a branch.
-      if (event === "PASSWORD_RECOVERY") setRecovering(true);
+      if (event === "PASSWORD_RECOVERY") setMustSetPassword(true);
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -128,8 +131,8 @@ export default function App() {
   if (!ready) return <div className="p-8 text-muted-foreground">Loading…</div>;
   if (!session) return <SignIn />;
   // Ahead of every shell below, including the admin one: an account arriving on a
-  // recovery link has nothing to do here until the password is actually changed.
-  if (recovering) return <SetPassword onDone={() => setRecovering(false)} />;
+  // recovery or invite link has nothing to do here until the password is actually set.
+  if (mustSetPassword) return <SetPassword onDone={() => setMustSetPassword(false)} />;
   if (!identified) return <div className="p-8 text-muted-foreground">Loading…</div>;
   /**
    * A factor is enrolled and this session has not used it. The password already made a

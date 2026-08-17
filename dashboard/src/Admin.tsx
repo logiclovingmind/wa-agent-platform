@@ -67,8 +67,9 @@ export default function Admin() {
     setOpen(orgId);
     if (meta[orgId]) return;
 
-    // A failure here is a finding, not an error state: the endpoint answers with nulls
-    // when Meta rejects the token, and an empty list reads as "no numbers configured".
+    // A failure here is a finding, not an error state: the endpoint reports a token Meta
+    // rejects as invalid and a Meta it never reached as nulls, and an empty list reads as
+    // "no numbers configured".
     const numbers = await clientHealth(orgId).catch(() => []);
     setMeta((m) => ({ ...m, [orgId]: numbers }));
   }
@@ -175,7 +176,7 @@ export default function Admin() {
         </div>
       </div>
 
-      <OnboardClient onChanged={() => void load()} />
+      <OnboardClient onChanged={() => void load()} orgIds={orgs.map((o) => o.org_id)} />
 
       {/* Above the table on purpose: an open distress flag outranks every number on this
           screen, and it is the one thing here that belongs to no single client's row. */}

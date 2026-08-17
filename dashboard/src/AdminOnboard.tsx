@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   exportOrg,
   offboardOrg,
@@ -35,17 +35,54 @@ const SECTORS: Array<[string, string]> = [
   ["pharmacy", "Pharmacy / ayurveda"],
 ];
 
-export function OnboardClient({ onChanged }: { onChanged: () => void }) {
+export function OnboardClient({
+  onChanged,
+  orgIds,
+}: {
+  onChanged: () => void;
+  /** The clients currently on the table, so a result panel cannot outlive the client it describes. */
+  orgIds: string[];
+}) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<Onboarding>(BLANK);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Onboarded | null>(null);
+  const [listed, setListed] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testResult, setTestResult] = useState<string | null>(null);
 
   const set = (k: keyof Onboarding) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   const ready = Object.values(form).every((v) => v.trim() !== "");
+
+  /**
+   * The result panel holds the webhook slug and a live one-time sign-in link — the two
+   * things this screen promises are shown once. Nothing used to clear them: Close left
+   * `done` set, so reopening showed the previous client's secrets instead of a form, and
+   * they stayed on screen after that client had been offboarded entirely.
+   */
+  function reset() {
+    setDone(null);
+    setListed(false);
+    setError(null);
+    setTestTo("");
+    setTestResult(null);
+  }
+
+  function dismiss() {
+    reset();
+    setOpen(false);
+  }
+
+  // Drop the panel when its client stops existing. `listed` is what keeps this from
+  // firing on the way in: `onChanged` reloads the table asynchronously, so for a moment
+  // after a successful onboard the new client is genuinely absent from `orgIds`, and
+  // without the guard the panel would erase itself the instant it appeared.
+  useEffect(() => {
+    if (!done) return;
+    if (orgIds.includes(done.org_id)) setListed(true);
+    else if (listed) dismiss();
+  }, [orgIds, done, listed]);
 
   async function submit() {
     setBusy(true);
@@ -95,7 +132,7 @@ export function OnboardClient({ onChanged }: { onChanged: () => void }) {
         </div>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={dismiss}
           className="rounded border border-border px-2 py-1 text-xs"
         >
           Close
@@ -168,11 +205,7 @@ export function OnboardClient({ onChanged }: { onChanged: () => void }) {
 
           <button
             type="button"
-            onClick={() => {
-              setDone(null);
-              setTestResult(null);
-              setTestTo("");
-            }}
+            onClick={reset}
             className="rounded border border-border px-2 py-1"
           >
             Onboard another

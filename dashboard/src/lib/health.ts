@@ -128,6 +128,11 @@ export function health({ db, meta, walletEmpty }: HealthInput): Verdict {
   return {
     level: red.length > 0 ? "red" : amber.length > 0 ? "amber" : "green",
     reasons: [...red, ...amber],
-    partial: meta === undefined,
+    // Null here now means only one thing — Meta never answered — because a Meta that
+    // answers with a refusal reports `false`. Either way it is a check that did not
+    // happen, and green from an unchecked half is the claim this must never make.
+    partial:
+      meta === undefined ||
+      meta.some((n) => n.token.valid === null || n.subscribed === null),
   };
 }

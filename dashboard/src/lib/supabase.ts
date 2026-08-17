@@ -1,6 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
 
 /**
+ * Which kind of link the tab was opened by, read from the URL fragment GoTrue redirects
+ * back with.
+ *
+ * It has to be captured here, above `createClient`, because supabase-js consumes that
+ * fragment while it initialises and a component mounting a tick later always finds it
+ * empty.
+ *
+ * A **recovery** link arrives as its own `PASSWORD_RECOVERY` event, so it needs none of
+ * this. An **invite** link does not — it is an ordinary `SIGNED_IN`, indistinguishable
+ * from a normal login, which left a newly onboarded owner on the inbox with a live
+ * session and no password ever chosen. They were locked out the moment it expired.
+ */
+export const arrivedBy = new URLSearchParams(window.location.hash.slice(1)).get("type");
+
+/**
  * The browser gets the anon key and nothing else. Invariant 6: Meta tokens, the LLM key
  * and anything that costs money live in the Worker.
  *

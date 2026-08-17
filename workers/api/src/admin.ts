@@ -139,11 +139,27 @@ async function numberHealth(env: Env, account: WaAccount) {
  *
  * A dead token makes several of these calls fail at once, and that *is* the finding —
  * turning it into a 500 would replace the diagnosis with a blank screen.
+ *
+ * The two ways a read can fail are different findings and must not collapse into one.
+ * Meta answering 4xx is a verdict — the token is unparseable, the id is wrong, the app
+ * holds no permission. Meta not answering is the absence of a verdict. Reporting the
+ * first as "we could not check" is what let a client whose token Meta rejects outright
+ * sit on the panel as green.
  */
-async function graph<T>(env: Env, path: string, auth: Record<string, string>): Promise<T | null> {
-  const res = await fetch(`${env.META_GRAPH_URL}${path}`, { headers: auth });
-  if (!res.ok) return null;
-  return (await res.json()) as T;
+type GraphRead<T> = { ok: true; body: T } | { ok: false; refused: boolean };
+
+async function graph<T>(
+  env: Env,
+  path: string,
+  auth: Record<string, string>,
+): Promise<GraphRead<T>> {
+  const res = await fetch(`${env.META_GRAPH_URL}${path}`, { headers: auth }).catch(() => null);
+  // A 5xx is Meta being broken, not the client being misconfigured, so it carries no
+  // verdict about this client either.
+  if (!res || res.status >= 500) return { ok: false, refused: false };
+  if (!res.ok) return { ok: false, refused: true };
+  const body = (await res.json().catch(() => null)) as T | null;
+  return body === null ? { ok: false, refused: false } : { ok: true, body };
 }
 
 /**
@@ -152,16 +168,20 @@ async function graph<T>(env: Env, path: string, auth: Record<string, string>): P
  * long before it arrives.
  */
 async function tokenStatus(env: Env, auth: Record<string, string>, token: string) {
-  const body = await graph<{ data?: { is_valid?: boolean; expires_at?: number } }>(
+  const read = await graph<{ data?: { is_valid?: boolean; expires_at?: number } }>(
     env,
     `/debug_token?input_token=${encodeURIComponent(token)}`,
     auth,
   );
-  if (!body?.data) return { valid: null, expires_at: null };
+  // Meta refusing to describe the token *is* the description: a token it cannot parse
+  // comes back as a 400 with `code: 190`, and calling that "not checked" is how a client
+  // that can no longer receive anything stayed green on the panel.
+  if (!read.ok) return { valid: read.refused ? false : null, expires_at: null };
+  if (!read.body.data) return { valid: null, expires_at: null };
 
-  const expires = body.data.expires_at;
+  const expires = read.body.data.expires_at;
   return {
-    valid: body.data.is_valid ?? null,
+    valid: read.body.data.is_valid ?? null,
     // Meta reports seconds; 0 is "never", and null is "Meta did not say".
     expires_at: typeof expires === "number" && expires > 0 ? expires : null,
   };
@@ -174,9 +194,12 @@ async function tokenStatus(env: Env, auth: Record<string, string>, token: string
  * simply have not written this week.
  */
 async function subscriptionStatus(env: Env, auth: Record<string, string>, wabaId: string) {
-  const body = await graph<{ data?: unknown[] }>(env, `/${wabaId}/subscribed_apps`, auth);
-  if (!body?.data) return null;
-  return body.data.length > 0;
+  const read = await graph<{ data?: unknown[] }>(env, `/${wabaId}/subscribed_apps`, auth);
+  // A refusal is still "no webhooks will arrive": a wrong WABA id, a token that cannot
+  // read it, and an app genuinely not subscribed all end the same way for the client.
+  if (!read.ok) return read.refused ? false : null;
+  if (!read.body.data) return null;
+  return read.body.data.length > 0;
 }
 
 /**
@@ -184,11 +207,14 @@ async function subscriptionStatus(env: Env, auth: Record<string, string>, wabaId
  * people", reports it as a bug in our software, and nothing on our side looks wrong.
  */
 async function numberStatus(env: Env, auth: Record<string, string>, phoneNumberId: string) {
-  return graph<{ quality_rating?: string; messaging_limit_tier?: string; verified_name?: string }>(
-    env,
-    `/${phoneNumberId}?fields=quality_rating,messaging_limit_tier,verified_name`,
-    auth,
-  );
+  const read = await graph<{
+    quality_rating?: string;
+    messaging_limit_tier?: string;
+    verified_name?: string;
+  }>(env, `/${phoneNumberId}?fields=quality_rating,messaging_limit_tier,verified_name`, auth);
+  // Unlike the token and the subscription, nothing here drives the light — an unknown
+  // quality rating is reported as unknown rather than assumed bad.
+  return read.ok ? read.body : null;
 }
 
 /**
@@ -200,12 +226,14 @@ async function templateStatus(env: Env, auth: Record<string, string>, account: W
   const name = account.reengagement_template_name;
   if (!name) return null;
 
-  const body = await graph<{ data?: Array<{ name?: string; status?: string; language?: string }> }>(
+  const read = await graph<{
+    data?: Array<{ name?: string; status?: string; language?: string }>;
+  }>(
     env,
     `/${account.waba_id}/message_templates?fields=name,status,language&name=${encodeURIComponent(name)}`,
     auth,
   );
-  const match = body?.data?.find(
+  const match = (read.ok ? read.body.data : undefined)?.find(
     (t) => t.name === name && (!account.reengagement_template_lang || t.language === account.reengagement_template_lang),
   );
 

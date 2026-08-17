@@ -246,8 +246,33 @@ describe("platform admin API", () => {
 
   // A dead token fails several Graph calls at once. That *is* the diagnosis, so it has to
   // arrive as an answer — a 500 would replace it with a blank screen.
-  it("answers with nulls when Meta rejects the token", async () => {
+  //
+  // Meta answering `code: 190` is a verdict, not a gap. This used to report null, null
+  // read as "not checked", and the onboarding rehearsal found a client whose token Meta
+  // refuses outright sitting on the all-clients table as a green "OK".
+  it("reports a token Meta refuses as invalid, not as unchecked", async () => {
     await harness({ admin: true });
+    const res = await get(`/api/admin/health/${ORG_A}`);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown).toMatchObject({
+      numbers: [
+        {
+          token: { valid: false, expires_at: null },
+          subscribed: false,
+          number: null,
+          template: { status: null },
+        },
+      ],
+    });
+  });
+
+  // The other half of the same rule, and the reason a refusal cannot simply be assumed:
+  // Meta being down says nothing about this client, so it must not be recorded as a fault
+  // against them. Null now means exactly one thing, which is what lets the panel treat it
+  // as "not checked" rather than "fine".
+  it("answers with nulls when Meta cannot be reached at all", async () => {
+    await harness({ admin: true, graph: () => new Response("upstream", { status: 503 }) });
     const res = await get(`/api/admin/health/${ORG_A}`);
 
     expect(res.status).toBe(200);

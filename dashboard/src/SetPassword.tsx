@@ -3,10 +3,11 @@ import { supabase } from "./lib/supabase";
 import { Button } from "./components/ui/button";
 
 /**
- * The other end of the admin panel's "Reset password" button. Clicking a recovery link
- * signs the person in, which without this screen means they land on the inbox with the
- * old password still set and nothing telling them otherwise — the link looks like it
- * did nothing.
+ * The other end of the admin panel's "Reset password" button, and of the invite link a
+ * new client's owner is handed. Both sign the person in before they have chosen
+ * anything: without this screen a recovery leaves them on the inbox with the old
+ * password still set and nothing saying so, and an invite leaves them there with no
+ * password at all — locked out as soon as the session ends.
  *
  * There is no current-password field and there should not be: whoever holds the link has
  * already proven possession of the mailbox, and someone resetting a password by
