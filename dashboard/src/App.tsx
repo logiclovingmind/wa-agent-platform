@@ -16,8 +16,9 @@ import { MfaChallenge, MfaSetup, mfaOwed } from "./Mfa";
 const Flowin = lazy(() => import("./Flowin"));
 const Admin = lazy(() => import("./Admin"));
 const Console = lazy(() => import("./Console"));
+const Diary = lazy(() => import("./Diary"));
 
-type View = "inbox" | "pulse" | "admin" | "console" | "security";
+type View = "inbox" | "pulse" | "diary" | "admin" | "console" | "security";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -39,6 +40,7 @@ export default function App() {
   const [mounted, setMounted] = useState<Record<View, boolean>>({
     pulse: true,
     inbox: false,
+    diary: false,
     admin: false,
     console: false,
     security: false,
@@ -140,7 +142,8 @@ export default function App() {
   if (adminOnly) {
     // `view` starts on the client landing screen, which this shell does not have. The
     // client list is the equivalent here, and naming it keeps its tab lit on arrival.
-    const adminView = view === "pulse" || view === "inbox" ? "admin" : view;
+    const adminView =
+      view === "pulse" || view === "inbox" || view === "diary" ? "admin" : view;
     return (
       <div className="flex h-dvh flex-col">
         <nav className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
@@ -212,6 +215,13 @@ export default function App() {
         >
           WhatsApp
         </Button>
+        <Button
+          variant={view === "diary" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setView("diary")}
+        >
+          Diary
+        </Button>
         {/* Only reachable by an account that is both a platform admin and a member of
             some org, which the split above is meant to make unnecessary. Kept so that
             granting the flag to an existing client owner does not lock them out of it. */}
@@ -254,12 +264,17 @@ export default function App() {
         <Suspense fallback={<Loading />}>
           {mounted.pulse && (
             <Pane show={view === "pulse"}>
-              <Flowin orgId={orgId} />
+              <Flowin orgId={orgId} onOpenDiary={() => setView("diary")} />
             </Pane>
           )}
           {mounted.inbox && (
             <Pane show={view === "inbox"}>
               <Inbox isOwner={isOwner} jumpTo={jumpTo} />
+            </Pane>
+          )}
+          {mounted.diary && (
+            <Pane show={view === "diary"}>
+              <Diary orgId={orgId} isOwner={isOwner} />
             </Pane>
           )}
           {mounted.admin && isPlatformAdmin && (

@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { supabase } from "./lib/supabase";
+import { UpcomingCard } from "./Diary";
 import { istToday, shiftDay } from "./lib/utils";
 
 /** Five weeks: a full calendar grid, and the window a month of activity fills. */
@@ -47,7 +48,7 @@ interface PulseHour {
  * Every number here is aggregated in Postgres (`pulse_*`). Counting a month of messages
  * in the browser would spend the shared 5GB egress budget on arithmetic.
  */
-export default function Flowin({ orgId }: { orgId: string }) {
+export default function Flowin({ orgId, onOpenDiary }: { orgId: string; onOpenDiary: () => void }) {
   const [days, setDays] = useState<PulseDay[]>([]);
   const [hours, setHours] = useState<PulseHour[]>([]);
   const [replySeconds, setReplySeconds] = useState<number | null>(null);
@@ -106,7 +107,7 @@ export default function Flowin({ orgId }: { orgId: string }) {
       <header className="mb-5">
         <h1 className="text-lg font-semibold">Flowin</h1>
         <p className="text-sm text-muted-foreground">
-          The last five weeks on WhatsApp.
+          The last five weeks on WhatsApp, and what is booked next.
         </p>
       </header>
 
@@ -125,6 +126,14 @@ export default function Flowin({ orgId }: { orgId: string }) {
           hint="while you were closed"
         />
         <Stat value={speed(replySeconds)} label="Typical reply time" />
+      </div>
+
+      {/* The one forward-looking thing on an otherwise entirely retrospective screen, and
+          high up rather than at the bottom: "who is coming in" is the question an owner
+          opens this on a phone to answer, and it does not survive a scroll past two
+          charts. The calendar itself is the Diary tab; this is the glance. */}
+      <div className="mb-4">
+        <UpcomingCard orgId={orgId} onOpen={onOpenDiary} />
       </div>
 
       <div className="mb-4 grid gap-4 lg:grid-cols-3">

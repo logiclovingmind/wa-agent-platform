@@ -1,4 +1,5 @@
 import type { Sector } from "./safety.js";
+import { istSlotLabel } from "./window.js";
 
 /** Prompt assembly is CPU, not I/O, so it is on the 10ms meter. Keep it to string joins. */
 export const HISTORY_LIMIT = 10;
@@ -60,6 +61,15 @@ export interface PromptInput {
    */
   slots?: string[] | undefined;
   /**
+   * When the customer is writing, so "today" and "tomorrow" resolve. Without it the model
+   * has no clock at all: it read a slot list starting at 3pm *today*, decided the day must
+   * therefore be over, and offered the same afternoon as "tomorrow".
+   *
+   * Passed in rather than read from `Date.now()` here so this stays a pure function of its
+   * input, which is what makes the prompt testable.
+   */
+  now?: Date | undefined;
+  /**
    * `organizations.voice` — an admin-authored tone line. Unlike the KB this is an
    * *instruction* and sits above the reference block, so it must never become
    * client-editable without the same containment the KB gets.
@@ -100,6 +110,11 @@ export function buildSystemPrompt(input: Omit<PromptInput, "history" | "customer
     // prompt it got before these columns existed.
     input.voice ? `- Tone: ${input.voice.trim()}` : "",
     input.languages ? `- You may reply in these languages, matching the customer's: ${input.languages.trim()}.` : "",
+    // Deliberately in the same words as the slot labels below, so "is that one today?" is
+    // a string comparison the model can actually do rather than date arithmetic.
+    input.now
+      ? `- It is ${istSlotLabel(input.now)} right now, in India. Read "today", "tomorrow" and any day name against that, and never guess the date.`
+      : "",
     "- Answer only from the reference block below. If it is not there, say you will check with the team.",
     "- Never quote a price that is not in the reference block.",
     SECTOR_RULES[input.sector] ? `- ${SECTOR_RULES[input.sector]}` : "",

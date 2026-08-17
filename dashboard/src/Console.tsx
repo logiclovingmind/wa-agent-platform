@@ -19,6 +19,8 @@ import {
   type OrgControls,
 } from "./lib/api";
 import { inr, ist } from "./lib/utils";
+import { ResetDemo } from "./DemoReset";
+import { HoursEditor } from "./Diary";
 
 /**
  * The training console — docs/admin-panel.md §11.
@@ -41,6 +43,10 @@ export default function Console() {
   const [override, setOverride] = useState(false);
   const [last, setLast] = useState<ConsoleRun | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
+  // A demo reset rewrites the name, the voice, the KB and the diary underneath the three
+  // panels in the sidebar, none of which reload on their own. Bumping this remounts them,
+  // so the console cannot go on showing the prospect's fees after they were deleted.
+  const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
     void supabase.rpc("admin_orgs").then(({ data }) => {
@@ -69,6 +75,15 @@ export default function Console() {
     setLast(null);
     setError(null);
     setOverride(false);
+  }
+
+  // The transcript goes too: the answers in it were written from a knowledge base that no
+  // longer exists, and leaving them on screen is how the next walk-in is shown the last
+  // one's replies.
+  async function afterReset() {
+    reset();
+    setReloads((n) => n + 1);
+    await refreshOrgs();
   }
 
   async function send() {
@@ -121,9 +136,9 @@ export default function Console() {
             <span className="text-xs text-muted-foreground">
               {inr(spent)} this session
             </span>
-            {/* Not "Reset": the button that undoes a demo lives in All clients and is
-                called Reset demo. Two buttons with one name had an operator clear the
-                transcript and believe the prospect's name and KB had been rolled back. */}
+            {/* Not "Reset": Reset demo is in the sidebar and undoes the whole overlay.
+                Two buttons with one name had an operator clear the transcript and believe
+                the prospect's name and KB had been rolled back. */}
             <button
               type="button"
               onClick={reset}
@@ -213,13 +228,23 @@ export default function Console() {
 
       <aside className="w-96 shrink-0 overflow-y-auto border-l border-border p-4">
         <Voice
+          key={`voice:${reloads}`}
           orgId={orgId}
           run={last}
           name={orgs.find((o) => o.org_id === orgId)?.name ?? ""}
           onRenamed={() => void refreshOrgs()}
         />
-        <Kb orgId={orgId} />
-        <Diary orgId={orgId} />
+        <Kb key={`kb:${reloads}`} orgId={orgId} />
+        <Diary key={`diary:${reloads}`} orgId={orgId} />
+
+        {/* On the demo org only, and here rather than only in All clients: the reset is
+            used mid-demo, between one prospect leaving and the next sitting down, and
+            that is this screen. It is the same component, so there is one of it. */}
+        {orgs.find((o) => o.org_id === orgId)?.is_demo && (
+          <div className="mt-6">
+            <ResetDemo onChanged={() => void afterReset()} />
+          </div>
+        )}
 
         {last && (
           <div className="mt-6 space-y-2 text-xs">
@@ -659,89 +684,48 @@ function Kb({ orgId }: { orgId: string }) {
  * returns nothing, the prompt says nothing about appointments, and the model is not
  * allowed to invent a time. Hours in, offers out.
  *
- * Monday leads because a week does, not because the numbers do — `weekday` is Postgres's
- * `dow`, where 0 is Sunday.
+ * The form is the client dashboard's `HoursEditor`, imported rather than copied — the two
+ * screens edit the same seven rows, and two copies of "which number is Sunday" would
+ * eventually disagree. Only the saving differs: this one goes through the Worker, because
+ * `business_hours` is owner-gated under RLS and the platform admin is a member of nothing.
  */
-const WEEK: Array<{ day: number; label: string }> = [
-  { day: 1, label: "Mon" },
-  { day: 2, label: "Tue" },
-  { day: 3, label: "Wed" },
-  { day: 4, label: "Thu" },
-  { day: 5, label: "Fri" },
-  { day: 6, label: "Sat" },
-  { day: 0, label: "Sun" },
-];
-
-const DEFAULT_OPEN = "09:00";
-const DEFAULT_CLOSE = "18:00";
-const DEFAULT_SLOT = 30;
-
-type Week = Record<number, { opens_at: string; closes_at: string } | undefined>;
-
 function Diary({ orgId }: { orgId: string }) {
-  const [week, setWeek] = useState<Week>({});
-  const [slot, setSlot] = useState(DEFAULT_SLOT);
+  const [hours, setHoursRows] = useState<HoursRow[] | null>(null);
   const [booked, setBooked] = useState<Appointment[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
+    setHoursRows(null);
     setBooked(null);
-    setWeek({});
-    setDirty(false);
     setError(null);
     if (!orgId) return;
 
     let live = true;
     void diary(orgId)
-      .then((d) => live && fill(d))
+      .then((d) => {
+        if (!live) return;
+        setHoursRows(d.hours);
+        setBooked(d.appointments);
+      })
       .catch((e) => live && setError(message(e)));
     return () => {
       live = false;
     };
   }, [orgId]);
 
-  function fill(d: { hours: HoursRow[]; appointments: Appointment[] }) {
-    const next: Week = {};
-    for (const h of d.hours) {
-      // `HH:MM:SS` off Postgres, and `<input type="time">` wants `HH:MM`.
-      next[h.weekday] = { opens_at: h.opens_at.slice(0, 5), closes_at: h.closes_at.slice(0, 5) };
-    }
-    setWeek(next);
-    // The table stores a slot length per day; this form writes one for the week, because
-    // no client has yet wanted a different appointment length on a Tuesday.
-    setSlot(d.hours[0]?.slot_minutes ?? DEFAULT_SLOT);
+  async function reload() {
+    const d = await diary(orgId);
+    setHoursRows(d.hours);
     setBooked(d.appointments);
-    setDirty(false);
   }
 
-  function toggle(day: number) {
-    setWeek((w) => ({
-      ...w,
-      [day]: w[day] ? undefined : { opens_at: DEFAULT_OPEN, closes_at: DEFAULT_CLOSE },
-    }));
-    setDirty(true);
-  }
-
-  function edit(day: number, field: "opens_at" | "closes_at", value: string) {
-    setWeek((w) => {
-      const row = w[day];
-      return row ? { ...w, [day]: { ...row, [field]: value } } : w;
-    });
-    setDirty(true);
-  }
-
-  async function save() {
+  async function save(next: HoursRow[]) {
     setBusy(true);
     setError(null);
     try {
-      const hours = WEEK.flatMap(({ day }) => {
-        const row = week[day];
-        return row ? [{ weekday: day, ...row, slot_minutes: slot }] : [];
-      });
-      await setHours(orgId, hours);
-      fill(await diary(orgId));
+      await setHours(orgId, next);
+      await reload();
     } catch (e) {
       setError(message(e));
     } finally {
@@ -754,7 +738,7 @@ function Diary({ orgId }: { orgId: string }) {
     setError(null);
     try {
       await cancelAppointment(orgId, id);
-      setBooked(await diary(orgId).then((d) => d.appointments));
+      await reload();
     } catch (e) {
       setError(message(e));
     } finally {
@@ -762,78 +746,11 @@ function Diary({ orgId }: { orgId: string }) {
     }
   }
 
-  const open = WEEK.filter(({ day }) => week[day]);
-  const broken = open.some(({ day }) => week[day]!.closes_at <= week[day]!.opens_at);
-
   return (
     <div className="mt-6 space-y-2 text-xs">
-      <div className="flex items-center gap-2">
-        <span className="uppercase tracking-wide text-muted-foreground">Diary</span>
-        <span className="flex-1" />
-        <select
-          value={slot}
-          onChange={(e) => {
-            setSlot(Number(e.target.value));
-            setDirty(true);
-          }}
-          className="rounded border border-border bg-transparent px-1 py-0.5"
-        >
-          {[15, 20, 30, 45, 60].map((m) => (
-            <option key={m} value={m}>
-              {m} min
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          disabled={busy || !dirty || broken}
-          onClick={() => void save()}
-          className="rounded bg-foreground px-2 py-0.5 font-medium text-background disabled:opacity-50"
-        >
-          Save
-        </button>
-      </div>
+      <div className="uppercase tracking-wide text-muted-foreground">Diary</div>
 
-      <p className="text-muted-foreground">
-        {open.length === 0
-          ? "No hours set, so the bot never offers a time and cannot book. It answers questions only."
-          : `The bot offers free ${slot}-minute slots inside these hours, up to a week ahead, and books the one the customer picks.`}
-      </p>
-
-      {WEEK.map(({ day, label }) => {
-        const row = week[day];
-        return (
-          <div key={day} className="flex items-center gap-2">
-            <label className="flex w-16 items-center gap-1.5">
-              <input type="checkbox" checked={!!row} onChange={() => toggle(day)} />
-              {label}
-            </label>
-            {row ? (
-              <>
-                <input
-                  type="time"
-                  value={row.opens_at}
-                  onChange={(e) => edit(day, "opens_at", e.target.value)}
-                  className="rounded border border-border bg-transparent px-1 py-0.5"
-                />
-                <span className="text-muted-foreground">–</span>
-                <input
-                  type="time"
-                  value={row.closes_at}
-                  onChange={(e) => edit(day, "closes_at", e.target.value)}
-                  className={`rounded border bg-transparent px-1 py-0.5 ${
-                    row.closes_at <= row.opens_at ? "border-destructive" : "border-border"
-                  }`}
-                />
-              </>
-            ) : (
-              <span className="text-muted-foreground">closed</span>
-            )}
-          </div>
-        );
-      })}
-
-      {broken && <p className="text-destructive">A day has to close after it opens.</p>}
+      <HoursEditor hours={hours} busy={busy} onSave={save} />
 
       {booked && booked.length > 0 && (
         <div className="space-y-1 pt-2">

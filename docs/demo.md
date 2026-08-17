@@ -65,6 +65,11 @@ Three things worth showing, in this order:
   beside the KB — 9:30 to 7, Monday to Saturday, in half hours — takes the one they pick,
   and the booking appears under **Booked** while you are both looking at it. Worth saying
   out loud: it can only offer times that are actually free, and it cannot invent one.
+- **They can see the diary.** Sign in as the demo org's own owner and open the **Diary**
+  tab: a month calendar with the booking you just made on it, next to four that were
+  already there. This is the answer to "so where do the appointments actually go?", and it
+  is the one screen on the tour that is theirs rather than ours — **Flowin** carries the
+  next few under **Coming up** as well.
 - **A human can cut in.** Open the Inbox on your laptop, take over the conversation, type
   a reply as yourself. The bot stops; it resumes on its own after thirty minutes idle.
 - **What it costs and what it catches.** The training console shows ₹ per reply. **All
@@ -72,14 +77,20 @@ Three things worth showing, in this order:
 
 ## Afterwards, five seconds
 
-**All clients** → the demo org → **After a demo** → **Reset demo** → **Confirm reset**.
+**After a demo** → **Reset demo** → **Confirm reset**. It is at the bottom of the training
+console's sidebar whenever the demo org is selected, so you never leave the screen you ran
+the demo on — and the same panel is still on the demo org's row in **All clients**.
 
-Not the **Clear chat** button in the training console — that only empties the transcript
+Not the **Clear chat** button at the top of the console — that only empties the transcript
 on screen. If the business name still reads like the prospect's, the reset has not run.
 
 It reports what it removed, and it always restores the same thing: **Demo Institute**,
-sector `general`, the seeded tone and languages, the two `Demo — …` documents, and an
-empty diary behind the seeded week of hours. Never the previous prospect's values.
+sector `general`, the seeded tone and languages, the two `Demo — …` documents, the seeded
+week of hours, and four upcoming bookings. Never the previous prospect's values.
+
+The four bookings are re-dated on every reset, taken by position from the free list rather
+than written as fixed times — so they are always this week, always inside opening hours,
+and always on the half-hour grid the bot itself offers.
 
 | Gone | Kept |
 |---|---|
@@ -87,7 +98,7 @@ empty diary behind the seeded week of hours. Never the previous prospect's value
 | Threads from your handset, with their messages, leads and flags | The 1,000 seeded conversations |
 | What the demo cost — the sandbox replies and console runs | The seeded month of spend |
 | Their name, tone, languages, reply length | — |
-| Every appointment booked during the demo | The seeded week of hours, put back |
+| Every appointment booked during the demo | The seeded week of hours and four bookings, re-dated |
 
 Two things it does not reach: **images** the prospect sent are still in Storage
 (`pnpm tsx scripts/demo-media.ts --remove` clears demo objects), and `audit_log` keeps

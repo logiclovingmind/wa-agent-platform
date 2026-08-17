@@ -178,6 +178,8 @@ export interface DecideInput {
   loadContext: () => Promise<PromptContext | null>;
   /** Must not throw: see the DO's `#classifyImages`. Omit where there are no images. */
   classifyImages?: (imageIds: string[]) => Promise<ImageFlags | null>;
+  /** Overridable so a test can pin the clock the prompt is told about. */
+  now?: Date;
 }
 
 /**
@@ -232,6 +234,7 @@ export async function decideReply(env: LlmEnv, input: DecideInput): Promise<Repl
     replyMaxWords: context.replyMaxWords,
     languages: context.languages,
     slots: context.slots,
+    now: input.now ?? new Date(),
   });
 
   let completion;

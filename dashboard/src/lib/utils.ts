@@ -66,6 +66,33 @@ export function shiftDay(day: string, delta: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + delta)).toISOString().slice(0, 10);
 }
 
+/**
+ * Which IST day an instant falls on, as `YYYY-MM-DD` — the key a calendar buckets by.
+ *
+ * Not the browser's day. A 9pm IST appointment is still 3:30pm in London and 11:30am in
+ * New York, so an owner travelling would otherwise see their evening bookings filed under
+ * the day before.
+ */
+export function istDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+/** The clock half of `ist()`, for when the date is already the row above: "10:30 am". */
+export function istTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Day of week for a `YYYY-MM-DD`, Postgres `dow` numbering: 0 is Sunday. */
+export function dayOfWeek(day: string): number {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
+}
+
 /** Invariant 12: everything is stored UTC and shown IST, whatever the browser's clock says. */
 export function ist(iso: string | null): string {
   if (!iso) return "";

@@ -209,6 +209,21 @@ describe("training console", () => {
     expect(sentPrompts[0]).toContain("Mon 7 Jan, 10:30 am");
   });
 
+  // Without this the model has no clock. Shown a slot list that starts at 3pm today, it
+  // concluded the day was over and offered that same afternoon as "tomorrow" — to a
+  // customer who then arrives a day late.
+  it("tells the model what day it is, in the same words as the slots", async () => {
+    harness({ slots: ["2026-08-17T09:30:00.000Z"] });
+    vi.setSystemTime(new Date("2026-08-17T08:40:00.000Z"));
+
+    await run({ text: "can I come tomorrow?" });
+    expect(sentPrompts[0]).toContain("It is Mon 17 Aug, 2:10 pm right now, in India");
+    // The slot label and the clock line have to be comparable as strings.
+    expect(sentPrompts[0]).toContain("- Mon 17 Aug, 3:00 pm");
+
+    vi.useRealTimers();
+  });
+
   it("says nothing about booking for a client with no hours", async () => {
     harness();
     await run({ text: "can I come Monday?" });
