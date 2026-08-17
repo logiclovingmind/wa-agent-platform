@@ -775,7 +775,7 @@ admin.post("/api/admin/orgs", async (c) => {
     org_id: orgId,
     // The one thing that has to be copied into Meta by hand, and the one thing that must
     // not be guessable.
-    webhook_url: `${new URL(c.req.url).origin}/webhook/${slug}`,
+    webhook_url: `${c.env.PUBLIC_API_ORIGIN}/webhook/${slug}`,
     subscribed,
     invite_link: invite.data?.properties?.action_link ?? null,
     invite_error: invite.error?.message ?? null,

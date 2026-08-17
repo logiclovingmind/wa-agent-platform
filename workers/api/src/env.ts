@@ -15,6 +15,15 @@ export interface Env {
    */
   DASHBOARD_ORIGIN: string;
 
+  /**
+   * This Worker's own public origin, e.g. https://wa-agent-api.wa-api.workers.dev.
+   *
+   * Configuration rather than `new URL(c.req.url).origin`, because the webhook URL built
+   * from it is pasted into Meta by hand and then called forever. Deriving it from the
+   * request meant it silently became whichever origin the admin panel happened to be on.
+   */
+  PUBLIC_API_ORIGIN: string;
+
   /** Graph API base including the version, e.g. https://graph.facebook.com/v21.0 */
   META_GRAPH_URL: string;
 

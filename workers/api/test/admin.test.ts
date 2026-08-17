@@ -577,7 +577,9 @@ describe("onboarding and offboarding", () => {
     // 128 bits of CSPRNG. The slug is the client's only per-client secret.
     const slug = account["webhook_slug"] as string;
     expect(slug).toMatch(/^[0-9a-f]{32}$/);
-    expect(body.webhook_url).toBe(`https://api.test/webhook/${slug}`);
+    // From PUBLIC_API_ORIGIN, not from the request: this URL is pasted into Meta once and
+    // called forever, so it cannot follow whichever origin the admin panel was open on.
+    expect(body.webhook_url).toBe(`https://webhook.test/webhook/${slug}`);
 
     // The audit row is the support record six months from now, and holds neither secret.
     const audit = rows(rest.find((c) => c.table.startsWith("audit_log") && c.method === "POST"));

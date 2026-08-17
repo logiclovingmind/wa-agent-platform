@@ -17,6 +17,10 @@ export default defineConfig({
           META_GRAPH_URL: "https://graph.test/v21.0",
           LLM_BASE_URL: "https://llm.test/v1",
           LLM_API_KEY: "test-llm-key",
+          // Deliberately not the `https://api.test` the test requests are sent to, so a
+          // webhook URL rebuilt from the request origin fails the assertion rather than
+          // matching it by coincidence.
+          PUBLIC_API_ORIGIN: "https://webhook.test",
           // 32 zero bytes, base64. Fixtures encrypt against this exact key.
           MASTER_KEY_V1: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         },
