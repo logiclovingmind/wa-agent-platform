@@ -354,7 +354,18 @@ select c.org_id, c.id, 'demo-919990030001-' || t.seq,
        (case when t.seq % 2 = 1 then 'inbound' else 'outbound' end)::message_direction,
        t.body, 'text', true,
        case when t.seq % 2 = 1 then null else 'read' end,
-       now() - interval '4 hours' + (t.seq * interval '9 minutes')
+       -- Paired on the question, not on the turn: a nine minute step between every row
+       -- would have the assistant taking nine minutes to answer, which is both untrue and
+       -- the number the Desk would then report. The customer sets the nine minute pace;
+       -- the reply follows a few seconds behind.
+       --
+       -- Anchored on the last turn rather than the first, so it ends 24 minutes ago to
+       -- match the conversation row above however many turns are added here. Counting
+       -- forward from a fixed start is what silently moved the end of this thread when
+       -- the pairing changed.
+       now() - interval '24 minutes'
+         - (((max(t.seq) over () - t.seq) / 2) * interval '9 minutes')
+         + case when t.seq % 2 = 0 then make_interval(secs => 5 + (t.seq * 3) % 5) else interval '0' end
 from conversations c
 cross join (values
   (1,  'Hi, I saw your ad for the data science course'),
@@ -426,15 +437,36 @@ cross join (values
 -- Minutes ago rather than an interval per row: the gaps are the point. A customer answers
 -- in seconds while they are at their phone and then goes quiet for an hour, and a thread
 -- whose turns are evenly spaced reads as generated at a glance.
+--
+-- `mins` is the customer's pacing and only that. A whole minute cannot express a reply
+-- that takes eight seconds, so an assistant turn ignores its own `mins` and lands a few
+-- seconds after the question above it. The Desk reads reply speed straight off these two
+-- timestamps: with both turns rounded to the minute every pair measured exactly 60s, and
+-- the demo answered its own "answers in seconds" headline with "1m".
 insert into messages
   (org_id, conversation_id, wa_message_id, direction, body, type, safety_screened, status, status_at, created_at)
-select c.org_id, c.id, 'demo-' || c.customer_wa_id || '-' || t.seq, t.dir::message_direction,
-       t.body, 'text', true,
-       case when t.dir = 'outbound' then 'read' end,
-       case when t.dir = 'outbound' then now() - make_interval(mins => t.mins) end,
-       now() - make_interval(mins => t.mins)
-from conversations c
-join (values
+select org_id, conversation_id, wa_message_id, dir, body, 'text', true, status, sent_at, sent_at
+from (
+  select c.org_id, c.id as conversation_id,
+         'demo-' || c.customer_wa_id || '-' || t.seq as wa_message_id,
+         t.dir::message_direction as dir, t.body,
+         case when t.dir = 'outbound' then 'read' end as status,
+         case
+           -- 4s of this is the debounce window the DO waits out before it builds a prompt
+           -- at all; the rest is the model. Varied per turn so the gap does not read as a
+           -- constant, which is its own kind of obviously-generated.
+           when t.dir = 'outbound'
+             and c.handoff_state <> 'human'
+             and lag(t.dir) over (partition by c.id order by t.seq) = 'inbound'
+             then now()
+                  - make_interval(mins => lag(t.mins) over (partition by c.id order by t.seq))
+                  + make_interval(secs => 5 + (t.seq * 3) % 5)
+           -- A person answered that one, and a person is not quick. Left in whole minutes
+           -- on purpose: the contrast is what makes the assistant's number mean anything.
+           else now() - make_interval(mins => t.mins)
+         end as sent_at
+  from conversations c
+  join (values
   -- Fees, then the price objection, then how to pay it. The most common thread there is.
   ('919990040001', 1, 'inbound',  'Hi, do you have any weekend classes?', 47),
   ('919990040001', 2, 'outbound', 'We do — Data Science runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 46),
@@ -546,7 +578,8 @@ join (values
   ('919990040012', 6, 'outbound', 'Yes — UPI, card or bank transfer, whichever is easiest.', 17),
   ('919990040012', 7, 'inbound',  'perfect, see you on the 6th', 6),
   ('919990040012', 8, 'outbound', 'See you then. I have noted you for the weekend batch.', 5)
-) as t(wa_id, seq, dir, body, mins) on t.wa_id = c.customer_wa_id;
+) as t(wa_id, seq, dir, body, mins) on t.wa_id = c.customer_wa_id
+) s;
 
 -- Taken from the messages rather than written twice. The row above went in with
 -- `now()` for both, which is only ever right for whichever thread happens to be newest;
