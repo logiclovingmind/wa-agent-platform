@@ -227,9 +227,14 @@ export default function App() {
     <div className="h-dvh bg-[#F2F2F5] md:p-4">
       <div className="flex h-full flex-col bg-background md:flex-row md:rounded-xl md:border md:border-black/5 md:shadow-sm">
         {/* Column from `md`, horizontal strip below it — one set of markup, because two
-            would drift. Deliberately not `overflow-hidden`: the search panel has to be
-            able to escape a 224px column and lie over the content beside it. */}
-        <nav className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 py-2 md:w-56 md:flex-col md:items-stretch md:gap-0.5 md:overflow-visible md:border-b-0 md:border-r md:bg-[#FAFAFA] md:px-3 md:py-4 md:rounded-l-xl">
+            would drift.
+            Wrapping rather than scrolling sideways on a phone. It used to be
+            `overflow-x-auto`, which put the full-width search box off the right edge behind
+            Sign out where nobody would find it, and — because a box that scrolls on one
+            axis cannot stay visible on the other — clipped the results panel as well. No
+            overflow of any kind here: that panel has to escape a 224px column and lie over
+            the content beside it. */}
+        <nav className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-3 py-2 md:w-56 md:flex-col md:flex-nowrap md:items-stretch md:gap-0.5 md:border-b-0 md:border-r md:bg-[#FAFAFA] md:px-3 md:py-4 md:rounded-l-xl">
           <div className="mr-2 flex shrink-0 items-center gap-2 md:mb-4 md:mr-0 md:px-2">
             <img src="/logo.svg" alt="" className="h-6 w-6 shrink-0" />
             {/* Ours, not the client's. The org name was here and it is the one thing on
