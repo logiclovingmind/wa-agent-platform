@@ -61,10 +61,11 @@ Three things worth showing, in this order:
 - **It answers as them.** Their prices, their hours, their tone. Ask something the KB
   does not cover and let them watch it decline to invent an answer — that is the feature,
   not a gap.
-- **It books.** Ask for an appointment. It offers real free times from the **Diary** panel
-  beside the KB — 9:30 to 7, Monday to Saturday, in half hours — takes the one they pick,
-  and the booking appears under **Booked** while you are both looking at it. Worth saying
-  out loud: it can only offer times that are actually free, and it cannot invent one.
+- **It books.** Ask for an appointment. It offers real free times from the hours in the
+  **Diary** panel beside the KB — 9:30 to 7, Monday to Saturday, in half hours — and takes
+  the one they pick. Show the booking on the **Diary** tab below, not in the console: the
+  console sets the hours, the client's own screen works the day. Worth saying out loud: it
+  can only offer times that are actually free, and it cannot invent one.
 - **They can see the diary.** Sign in as the demo org's own owner and open the **Diary**
   tab: **Today** is the booking you just made alongside the rest of the day, and **Month**
   is the same week as a calendar to find a date on. This is the answer to "so where do the
@@ -92,19 +93,25 @@ on screen. If the business name still reads like the prospect's, the reset has n
 
 It reports what it removed, and it always restores the same thing: **Demo Institute**,
 sector `general`, the seeded tone and languages, the two `Demo — …` documents, the seeded
-week of hours, a week of upcoming bookings, one blocked-out stretch, and the two settled
+week of hours, six upcoming bookings, one blocked-out hour, and the two settled
 appointments earlier today. Never the previous prospect's values.
 
 The bookings are re-dated on every reset, taken by position from the free list rather than
 written as fixed times — so they are always this week, always inside opening hours, and
-always on the half-hour grid the bot itself offers. The settled pair are counted backwards
-from now for the same reason; reset before opening time and there are no past slots that
-day, so those two are simply absent until the morning is under way.
+always on the half-hour grid the bot itself offers.
 
-One thing the reset cannot put back: the no-show's link to a WhatsApp thread. The reset
-deletes every conversation, so it restores that appointment as a walk-in and the **Desk**
-beat above has nothing to name. Re-run `scripts/demo-seed.sql` before the next demo — the
-same file that seeds the inbox — and the link comes back with the threads.
+**You do not have to press reset to keep the diary current.** The nightly job at 01:30 IST
+rebuilds it on its own, so a demo two weeks after the last reset still opens on this week.
+It moves the diary and the opening hours and *nothing else* — a prospect's name, voice and
+KB are left exactly as you set them, because a walk-in who says "send it to me Friday" is
+the case that overlay exists for. Press reset when the prospect leaves, not to fix the
+dates.
+
+One thing neither the reset nor the nightly job can put back: the no-show's link to a
+WhatsApp thread. The reset deletes every conversation, so it restores that appointment as a
+walk-in and the **Desk** beat above has nothing to name. Re-run `scripts/demo-seed.sql`
+before the next demo — the same file that seeds the inbox — and the link comes back with
+the threads.
 
 | Gone | Kept |
 |---|---|
@@ -112,7 +119,7 @@ same file that seeds the inbox — and the link comes back with the threads.
 | Threads from your handset, with their messages, leads and flags | The 1,000 seeded conversations |
 | What the demo cost — the sandbox replies and console runs | The seeded month of spend |
 | Their name, tone, languages, reply length | — |
-| Every appointment booked during the demo | The seeded week of hours and four bookings, re-dated |
+| Every appointment booked during the demo | The seeded week of hours and ten diary rows, re-dated |
 
 Two things it does not reach: **images** the prospect sent are still in Storage
 (`pnpm tsx scripts/demo-media.ts --remove` clears demo objects), and `audit_log` keeps

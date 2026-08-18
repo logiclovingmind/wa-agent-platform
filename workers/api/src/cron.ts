@@ -310,9 +310,31 @@ async function retentionDelete(env: Env): Promise<void> {
   await deleteExpired(env);
 }
 
+/**
+ * Puts the demo org's diary back on this week. The seed is written relative to today,
+ * so without this it only reads right on the day somebody last pressed reset.
+ *
+ * Diary only — identity and KB are left alone, because an overlay still on the demo org
+ * overnight is a prospect coming back tomorrow.
+ */
+async function rollDemoDiary(env: Env): Promise<void> {
+  const { error } = await createServiceClient(env).rpc("demo_roll_diary");
+  if (error) throw new Error(`demo diary roll failed: ${error.message}`);
+}
+
+/**
+ * Piggybacked rather than given the fourth of five cron triggers, and caught rather
+ * than thrown: a stale demo diary is not an incident, and it must not fail the usage
+ * heartbeat, which is.
+ */
+async function nightly(env: Env): Promise<void> {
+  await rollDemoDiary(env).catch((error: unknown) => report(env, error, { job: "demo-diary" }));
+  await usageCheck(env);
+}
+
 /** Keyed by the exact expression in wrangler.jsonc. UTC; IST is +5:30. */
 const JOBS: Record<string, { slug: string; run: (env: Env) => Promise<void> }> = {
-  "0 20 * * *": { slug: "usage-check", run: usageCheck },
+  "0 20 * * *": { slug: "usage-check", run: nightly },
   "0 21 * * *": { slug: "retention-delete", run: retentionDelete },
   "0 22 * * 7": { slug: "dedupe-sweep", run: sweepDedupe },
 };

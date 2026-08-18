@@ -811,22 +811,14 @@ $kb$)
 -- guardrails, not an industry (docs/admin-panel.md §10).
 select app.demo_restore_defaults();
 
--- Today's no-show, given a thread to belong to.
+-- The no-show's link to a thread used to be made here, by hand, after the restore. It is
+-- inside the restore now (0040), joined on the same seeded numbers this file writes, and
+-- it has to be: the nightly job rebuilds that diary without this file ever running, and a
+-- no-show with no conversation cannot show the half of the feature that matters —
+-- `desk_queue` reads it and puts the customer back on the desk under "did not turn up".
 --
--- The pair of settled appointments inside `demo_restore_defaults()` are walk-ins carrying
--- no conversation, deliberately: the reset button calls that function and must not depend
--- on rows this file writes. But a walk-in who did not turn up cannot show the half of the
--- feature that matters — `desk_queue` reads the no-show and puts the customer back on the
--- desk under "did not turn up", which is the whole follow-up mechanism. So the link is
--- made here, where the threads exist.
-update appointments a
-set conversation_id = c.id,
-    customer_name = coalesce(c.customer_name, a.customer_name)
-from conversations c
-where a.org_id = app.demo_org()
-  and a.status = 'no_show'
-  and c.org_id = a.org_id
-  and c.customer_wa_id = '919990010009';
+-- The reset still does not depend on the rows below. The join over there is a LEFT join,
+-- so when the threads are absent the appointment is written unlinked rather than skipped.
 
 commit;
 

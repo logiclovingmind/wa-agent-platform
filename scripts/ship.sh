@@ -118,6 +118,9 @@ check_anon org_month_spend "{\"p_org_id\":\"$NIL\"}"
 check_anon demo_reset '{}'
 check_anon demo_setup_save '{"p_label":"anything"}'
 check_anon demo_setup_load "{\"p_id\":\"$NIL\"}"
+# The one demo function with no in-body admin guard, because no browser may call it at
+# all: the nightly cron holds the only grant, so the revoke is the whole lock.
+check_anon demo_roll_diary '{}'
 # free_slots is granted to `authenticated` (the dashboard shows the diary), so this only
 # asserts the anon half. book_appointment is revoked from everyone: it books across orgs
 # by signature and the Worker calls it as service_role.

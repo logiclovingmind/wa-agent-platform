@@ -46,7 +46,27 @@ describe("scheduled", () => {
 
     // Storage has no count to HEAD, so the 1GB check is an rpc that sums metadata.
     expect(calls.filter((c) => c.table === "rpc/media_bytes")).toHaveLength(1);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
+  });
+
+  // Rides the usage job rather than the fourth of five cron triggers.
+  it("puts the demo diary back on this week on the daily trigger", async () => {
+    const calls = stub();
+    await fire("0 20 * * *");
+
+    expect(calls.filter((c) => c.table === "rpc/demo_roll_diary")).toHaveLength(1);
+  });
+
+  // The demo is a sales prop; the usage check is the only warning before a free-tier
+  // wall that takes every client down. A stale diary must not swallow it.
+  it("still runs the usage check when the demo roll fails", async () => {
+    const calls = stubSupabase((call) => {
+      if (call.table === "rpc/demo_roll_diary") throw new Error("demo org is gone");
+      return [];
+    });
+    await fire("0 20 * * *");
+
+    expect(calls.filter((c) => c.table === "rpc/media_bytes")).toHaveLength(1);
   });
 
   it("scrubs flagged content and deletes expired rows on the retention trigger", async () => {

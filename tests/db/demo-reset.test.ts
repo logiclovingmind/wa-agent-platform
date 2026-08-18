@@ -387,3 +387,85 @@ describe("demo_setup_save and demo_setup_load", () => {
     ).rejects.toThrow(/no such setup/i);
   });
 });
+
+// The nightly job. Its whole reason to exist is that it does *less* than
+// `demo_restore_defaults()`: a walk-in's overlay is still on the demo org at 01:30 and
+// has to survive to Friday, so the diary moves and nothing else does.
+describe("demo_roll_diary", () => {
+  it("is unreachable by anon", async () => {
+    await db.query("set role anon");
+    await expect(db.query("select public.demo_roll_diary()")).rejects.toThrow(
+      /permission denied/i,
+    );
+    await db.query("reset role");
+  });
+
+  it("rebuilds the diary around today and leaves the overlay alone", async () => {
+    const after = await asUser(db, admin, async () => {
+      await db.query("set local role postgres");
+      await db.query("select public.demo_roll_diary()");
+
+      const org = (
+        await db.query<{ name: string }>("select name from organizations where id = $1", [fx.orgA])
+      ).rows[0]!;
+      const kb = (
+        await db.query<{ title: string }>("select title from kb_documents where org_id = $1", [
+          fx.orgA,
+        ])
+      ).rows;
+      const appts = (
+        await db.query<{
+          past: string;
+          future: string;
+          blocks: string;
+          linked: string;
+          slots: string;
+          rows: string;
+        }>(
+          `select count(*) filter (where status <> 'booked' and kind = 'appointment')::text as past,
+                  count(*) filter (where starts_at > now())::text as future,
+                  count(*) filter (where kind = 'block')::text as blocks,
+                  count(*) filter (where conversation_id is not null)::text as linked,
+                  count(distinct starts_at)::text as slots,
+                  count(*)::text as rows
+             from appointments where org_id = $1`,
+          [fx.orgA],
+        )
+      ).rows[0]!;
+
+      return { name: org.name, kb: kb.map((r) => r.title), appts };
+    });
+
+    // Set by a walk-in in beforeAll. `demo_restore_defaults()` would have put both back.
+    expect(after.name).toBe("Sharma Dental");
+    expect(after.kb).toEqual(["Sharma Dental — fees"]);
+
+    // The settled pair — "Came" and the no-show. Counted by status rather than by clock:
+    // the cron runs at 01:30 IST, when nothing today has passed yet, and the pair still
+    // has to be written or the demo shown at 11am has no answered-for morning at all.
+    expect(after.appts.past).toBe("2");
+    expect(Number(after.appts.future)).toBeGreaterThan(0);
+    expect(after.appts.blocks).toBe("2");
+
+    // Two rows on one slot is the shape the day pane cannot draw, and the settled pair is
+    // read off the full grid rather than the free list, so nothing else prevents it.
+    expect(after.appts.slots).toBe(after.appts.rows);
+
+    // The two rows joined to a seeded conversation. Without that column the demo omits
+    // both "booked on WhatsApp" and the desk's did-not-turn-up callback, silently — only
+    // SEEDED_WA exists in this fixture, so one of the two links.
+    expect(Number(after.appts.linked)).toBeGreaterThan(0);
+  });
+
+  it("is idempotent — a second night does not stack a second diary", async () => {
+    const counts = await asUser(db, admin, async () => {
+      await db.query("set local role postgres");
+      await db.query("select public.demo_roll_diary()");
+      const one = await count("appointments", fx.orgA);
+      await db.query("select public.demo_roll_diary()");
+      return [one, await count("appointments", fx.orgA)];
+    });
+
+    expect(counts[0]).toBe(counts[1]);
+  });
+});
