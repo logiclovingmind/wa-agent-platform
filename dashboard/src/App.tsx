@@ -66,6 +66,9 @@ export default function App() {
   // it may well be older than the fifty rows the list holds.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(0);
+  // Counter rather than a boolean: the Desk tab has to be able to say "go home" twice in
+  // a row, and a flag that is already true says nothing the second time.
+  const [deskHome, setDeskHome] = useState(0);
   // An invite is known from the URL before any event fires; recovery announces itself
   // below. Both end in the same place — nobody gets past this with a password they have
   // never chosen.
@@ -249,7 +252,10 @@ export default function App() {
               forth all morning. A number would invite reading it; a dot does not. */}
           <NavItem
             active={view === "desk"}
-            onClick={() => setView("desk")}
+            onClick={() => {
+              setView("desk");
+              setDeskHome((n) => n + 1);
+            }}
             dot={waiting > 0 ? `${waiting} waiting` : null}
             icon={CircleDot}
           >
@@ -301,7 +307,13 @@ export default function App() {
           )}
           {mounted.desk && (
             <Pane show={view === "desk"} label="The desk">
-              <Desk orgId={orgId} isOwner={isOwner} jumpTo={jumpTo} onWaiting={setWaiting} />
+              <Desk
+                orgId={orgId}
+                isOwner={isOwner}
+                jumpTo={jumpTo}
+                homeSignal={deskHome}
+                onWaiting={setWaiting}
+              />
             </Pane>
           )}
           {mounted.diary && (

@@ -422,6 +422,20 @@ export async function consoleRun(
   return (await res.json()) as ConsoleRun;
 }
 
+/**
+ * Stop or restart the assistant for the whole business. Owner-only at the Worker, and a
+ * Worker call rather than a supabase-js update because `authenticated` may only write
+ * `organizations.name`.
+ *
+ * The new value is read back from the response rather than assumed, so a screen can never
+ * show "paused" for a write that did not land.
+ */
+export async function setAiPaused(paused: boolean): Promise<boolean> {
+  const res = await post("/api/org/ai-pause", { paused });
+  if (!res.ok) throw new Error(await res.text());
+  return ((await res.json()) as { ai_paused: boolean }).ai_paused;
+}
+
 export async function takeover(conversationId: string): Promise<void> {
   const res = await post(`/api/conversations/${conversationId}/takeover`);
   if (!res.ok) throw new Error(await res.text());

@@ -22,8 +22,8 @@ wrong.
 5. One reply = one message. In the prompt *and* asserted in code before send.
 6. Secrets never reach the browser. Meta, LLM, and money go through the Worker.
 7. Never `select *` on `messages`. Paginate at 20.
-8. Realtime subscribes to the open conversation only. Unsubscribe on unmount and tab
-   close.
+8. Realtime subscribes to the open conversation and the desk list, nothing else.
+   Unsubscribe on unmount and tab close.
 9. Media to object storage by key, never into Postgres. Meta media URLs expire in
    ~5 min.
 10. Distress/self-harm/abuse → one hardcoded acknowledgement, then instant human

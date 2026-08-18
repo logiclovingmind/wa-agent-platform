@@ -11,6 +11,7 @@ import { Button } from "./components/ui/button";
 import { Count, Empty, Group, Stat, TabButton } from "./components/screen";
 import { cn, ist, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
 import { downloadLeadsCsv, leadsFor } from "./lib/leads";
+import { setAiPaused } from "./lib/api";
 import Thread from "./Thread";
 
 /** The "All" tab only. The queue is not built from this list — see `desk_queue`. */
@@ -19,6 +20,11 @@ const LIST_LIMIT = 50;
 /** A callback nobody made in a week is not today's work. It stays reachable, but it
  *  stops competing with the person who messaged an hour ago. */
 const COLD_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** One exchange moves a conversation row several times — inbound, handoff, reply, window —
+ *  and each move is its own event. Waiting for the burst to settle turns a two-second
+ *  conversation into one re-read of the queue instead of four. */
+const DESK_SETTLE_MS = 400;
 
 const istMidnight = (day: string) => `${day}T00:00:00+05:30`;
 
@@ -62,11 +68,14 @@ export default function Desk({
   orgId,
   isOwner,
   jumpTo,
+  homeSignal,
   onWaiting,
 }: {
   orgId: string;
   isOwner: boolean;
   jumpTo: string | null;
+  /** Bumped every time the Desk tab is clicked — see the effect that closes the thread. */
+  homeSignal: number;
   onWaiting?: (n: number) => void;
 }) {
   const [queue, setQueue] = useState<QueueRow[]>([]);
@@ -92,6 +101,11 @@ export default function Desk({
     known: false,
   });
   const [cursor, setCursor] = useState(-1);
+  // Null until the org row is read. Not `false`: an unknown state rendered as "the
+  // assistant is answering" is the one wrong answer here, because it is the reassuring one.
+  const [paused, setPaused] = useState<boolean | null>(null);
+  const [pausing, setPausing] = useState(false);
+  const [pauseError, setPauseError] = useState<string | null>(null);
 
   useNow();
 
@@ -99,6 +113,7 @@ export default function Desk({
     if (!orgId) return;
     void load();
     void loadDay(orgId);
+    void loadPaused(orgId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
@@ -146,6 +161,77 @@ export default function Desk({
     // not for the list.
     const ids = new Set([...rows.map((r) => r.id), ...(data ?? []).map((c) => c.id)]);
     setLeads(await leadsFor([...ids]));
+  }
+
+  /**
+   * The desk, live. Every ranking on this screen — the queue order, who is waiting, how
+   * long the window has left — is computed in Postgres by `desk_queue`, so an event is a
+   * signal to re-read rather than a row to merge in. Merging the payload would leave the
+   * list correct and the order wrong.
+   *
+   * Debounced because one customer message moves the row more than once: the inbound
+   * write, then the reply, then the handoff state. Reloading three times for one exchange
+   * is three times the egress for the same screen.
+   */
+  useEffect(() => {
+    if (!orgId) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const channel = supabase
+      .channel(`desk:${orgId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations", filter: `org_id=eq.${orgId}` },
+        () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            void load();
+            void loadDay(orgId);
+          }, DESK_SETTLE_MS);
+        },
+      )
+      .subscribe();
+
+    const drop = () => void supabase.removeChannel(channel);
+    // Same as Thread: closing the tab does not reliably run cleanup, and this channel
+    // shares the tab's one socket rather than opening a second.
+    window.addEventListener("pagehide", drop);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", drop);
+      drop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  /**
+   * Read rather than written from here: `authenticated` may only update
+   * `organizations.name`, so the switch goes through the Worker and this is the state it
+   * reports back. Staff read it too — they need to know the assistant has stopped, even
+   * though only an owner may stop it.
+   */
+  async function loadPaused(id: string) {
+    const { data } = await supabase
+      .from("organizations")
+      .select("ai_paused")
+      .eq("id", id)
+      .maybeSingle<{ ai_paused: boolean }>();
+    if (data) setPaused(data.ai_paused);
+  }
+
+  async function togglePause() {
+    if (paused === null) return;
+    setPausing(true);
+    setPauseError(null);
+    try {
+      // The Worker's answer, not the value we hoped for: a failed write must not leave the
+      // desk claiming the assistant is paused while it is still replying to customers.
+      setPaused(await setAiPaused(!paused));
+    } catch (e) {
+      setPauseError(e instanceof Error ? e.message : "could not change it");
+    } finally {
+      setPausing(false);
+    }
   }
 
   /** Today only. Counted in Postgres for the same reason Flowin's numbers are. */
@@ -199,6 +285,14 @@ export default function Desk({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpTo]);
+
+  // Clicking Desk means "take me to the desk", but the screen stays mounted between tabs,
+  // so a thread left open was still covering it and only Back or Escape got out. The tab
+  // now closes it, which is what every other tab in this nav already does by being a
+  // different screen.
+  useEffect(() => {
+    if (homeSignal) setOpenId(null);
+  }, [homeSignal]);
 
   const open =
     queue.find((c) => c.id === openId) ?? conversations.find((c) => c.id === openId) ?? null;
@@ -374,6 +468,19 @@ export default function Desk({
           </p>
         )}
 
+        {/* On every tab and on the phone too, not tucked into the day panel with the
+            switch: a paused assistant is the reason the desk looks quiet, and an owner who
+            cannot see that concludes the product is broken. */}
+        {paused && (
+          <div className="mx-1 mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[13px]">
+            <p>
+              <span className="font-semibold text-amber-600">The assistant is paused.</span>{" "}
+              Every new message waits for a person. Nobody is told that — they simply get no
+              reply until someone here sends one.
+            </p>
+          </div>
+        )}
+
         {tab === "flagged" && (
           <div className="mx-1 mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-[13px]">
             {flagged.length === 0 ? (
@@ -492,6 +599,39 @@ export default function Desk({
               >
                 {exportNote.text}
               </p>
+            )}
+
+            {/* Owner-only, matching the Worker: staff would get a 403 from a button that
+                looked available. Below the day's numbers because it is the decision the
+                numbers inform, and it is deliberately not a one-tap switch in the header —
+                turning the assistant off for the whole business should take a moment. */}
+            {isOwner && paused !== null && (
+              <>
+                <hr className="my-8 border-border" />
+                <h3 className="text-[15px] font-medium">
+                  {paused ? "You are answering everything" : "The assistant is answering"}
+                </h3>
+                <p className="mt-1 max-w-lg text-[15px] leading-relaxed text-muted-foreground">
+                  {paused
+                    ? "Every enquiry is waiting for a person, including the ones that arrive tonight. Nothing is lost — they queue on the left."
+                    : "Pause it when you would rather reply yourself. It stops for the whole business, and everything that arrives waits on this desk until you send it."}
+                </p>
+                <div className="mt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pausing}
+                    onClick={() => void togglePause()}
+                  >
+                    {pausing
+                      ? "Saving…"
+                      : paused
+                        ? "Let the assistant answer again"
+                        : "Pause the assistant"}
+                  </Button>
+                </div>
+                {pauseError && <p className="mt-3 text-[13px] text-destructive">{pauseError}</p>}
+              </>
             )}
           </div>
         </div>

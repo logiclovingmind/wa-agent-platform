@@ -187,6 +187,55 @@ api.post("/api/conversations/:id/export", async (c) => {
 });
 
 /**
+ * Whole-business pause. `organizations.ai_paused` already stops the assistant answering —
+ * `shouldReply()` in packages/shared/src/reply.ts returns "paused" and every conversation
+ * goes to a person — but until now only a platform admin could set it, which meant an owner
+ * who wanted to handle the day themselves had to phone us.
+ *
+ * It cannot be a direct write from the browser: 0001 revokes UPDATE on `organizations` from
+ * `authenticated` and grants back only `(name)`. That grant is the reason this is a Worker
+ * route rather than a supabase-js call, and it should stay that way — widening it would put
+ * the client's spend cap and retention behind nothing but a policy.
+ *
+ * Owner-only, not staff. Pausing the assistant is a decision about the business, and it is
+ * silent from the customer's side: nobody is told, they simply wait for a person.
+ */
+api.post("/api/org/ai-pause", async (c) => {
+  const caller = c.get("caller");
+  if (caller.kind !== "member" || caller.role !== "owner") {
+    return c.json({ error: "owner only" }, 403);
+  }
+
+  const body = (await c.req.json().catch(() => null)) as { paused?: unknown } | null;
+  // Explicit boolean, never a truthiness test: a typo that arrives as the string "false"
+  // would otherwise switch the assistant off for the whole business.
+  if (typeof body?.paused !== "boolean") {
+    return c.json({ error: "paused must be true or false" }, 400);
+  }
+  const paused = body.paused;
+
+  // organizations is keyed by id, not org_id, so like the admin controls route this is one
+  // of the few writes that cannot go through OrgDb.update(). The filter is the caller's own
+  // org, which authenticate() resolved — never anything from the request.
+  const { error } = await createServiceClient(c.env)
+    .from("organizations")
+    .update({ ai_paused: paused })
+    .eq("id", caller.orgId);
+  if (error) throw new Error(`ai pause update failed: ${error.message}`);
+
+  // Audited like the admin equivalent: "the assistant stopped answering on the 3rd" is
+  // exactly the question asked later, and the answer is different if a person chose it.
+  const audit = await createOrgDb(c.env, caller.orgId).insert("audit_log", {
+    actor_user_id: caller.userId,
+    action: "ai_pause_changed",
+    detail: { ai_paused: paused, by: "owner" },
+  });
+  if (audit.error) throw new Error(`audit_log insert failed: ${audit.error.message}`);
+
+  return c.json({ ai_paused: paused });
+});
+
+/**
  * What is left in the LLM wallet. Through the Worker because the LLM key buys things
  * (invariant 6) and must never reach a browser.
  *

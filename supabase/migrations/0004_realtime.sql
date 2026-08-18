@@ -2,8 +2,8 @@
 -- are in the `supabase_realtime` publication. Subscribing to a table that is not in it
 -- fails silently — the channel joins and no event ever arrives.
 --
--- `messages` only. The conversation list refreshes on demand; a second subscription per
--- open tab would spend the 200-connection free tier on a sidebar.
+-- `messages` only here. `conversations` was added later, in 0038 — see that file for why
+-- the "a second subscription costs a second connection" reasoning below was wrong.
 --
 -- The publication is created by the Supabase platform, not by plain Postgres, so local
 -- runs have to make it themselves.

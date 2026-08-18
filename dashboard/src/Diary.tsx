@@ -145,6 +145,9 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const [action, setAction] = useState<"book" | "block" | null>(null);
   /** The booking being given another time, if any. One at a time, by construction. */
   const [moving, setMoving] = useState<Booking | null>(null);
+  /** The one booking showing its actions. Every row used to show them at once, which put
+      four Cancel buttons on an ordinary morning and made the day read as a form. */
+  const [openBooking, setOpenBooking] = useState<string | null>(null);
   /** The one thing that happened off-screen and has to be said in words. */
   const [note, setNote] = useState<string | null>(null);
 
@@ -567,7 +570,15 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
               <Empty>{hours !== null && !openDays.has(dayOfWeek(today)) ? "Closed." : "Nothing booked."}</Empty>
             ) : (
               onToday.map((b) => (
-                <BookingRow key={b.id} b={b} active={today === day} onPick={() => setSelected(today)} />
+                <BookingRow
+                  key={b.id}
+                  b={b}
+                  active={b.id === openBooking}
+                  onPick={() => {
+                    setSelected(today);
+                    setOpenBooking(b.id);
+                  }}
+                />
               ))
             )}
           </Group>
@@ -611,6 +622,14 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
                   <BookingRow
                     b={b}
                     busy={busy}
+                    active={b.id === openBooking}
+                    onPick={() => {
+                      setNote(null);
+                      // Any row click abandons a half-finished reschedule: the form belongs
+                      // to the row that opened it and must not outlive it.
+                      setMoving(null);
+                      setOpenBooking((id) => (id === b.id ? null : b.id));
+                    }}
                     onCancel={() => void (b.kind === "block" ? unblock([b.id]) : cancel(b.id))}
                     onMark={(status) => void mark(b.id, status)}
                     onMove={() => {
@@ -797,7 +816,9 @@ function BookingRow({
         line
       )}
 
-      {onCancel && (
+      {/* Only the open row. Cancel and No show are one click each and irreversible enough
+          to matter, so they belong to the booking somebody has actually pointed at. */}
+      {onCancel && active && (
         <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
           <span className="tabular-nums">{b.duration_minutes} min</span>
           {b.conversation_id && !block && <span>booked on WhatsApp</span>}
