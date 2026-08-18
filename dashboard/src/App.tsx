@@ -1,7 +1,14 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { arrivedBy, supabase } from "./lib/supabase";
-import { Activity, CalendarDays, CircleDot, type LucideIcon } from "lucide-react";
+import {
+  ClientsIcon,
+  ConsoleIcon,
+  DeskIcon,
+  DiaryIcon,
+  FlowinIcon,
+  type Icon,
+} from "./components/icons";
 import { cn } from "./lib/utils";
 import { Button } from "./components/ui/button";
 import ErrorBoundary from "./ErrorBoundary";
@@ -244,7 +251,7 @@ export default function App() {
             </div>
           )}
 
-          <NavItem active={view === "pulse"} onClick={() => setView("pulse")} icon={Activity}>
+          <NavItem active={view === "pulse"} onClick={() => setView("pulse")} icon={FlowinIcon}>
             Flowin
           </NavItem>
           {/* The only state this shell carries. It answers "is anyone waiting" from the
@@ -257,23 +264,23 @@ export default function App() {
               setDeskHome((n) => n + 1);
             }}
             dot={waiting > 0 ? `${waiting} waiting` : null}
-            icon={CircleDot}
+            icon={DeskIcon}
           >
             Desk
           </NavItem>
-          <NavItem active={view === "diary"} onClick={() => setView("diary")} icon={CalendarDays}>
+          <NavItem active={view === "diary"} onClick={() => setView("diary")} icon={DiaryIcon}>
             Diary
           </NavItem>
           {/* Only reachable by an account that is both a platform admin and a member of
               some org, which the split above is meant to make unnecessary. Kept so that
               granting the flag to an existing client owner does not lock them out of it. */}
           {isPlatformAdmin && (
-            <NavItem active={view === "admin"} onClick={() => setView("admin")}>
+            <NavItem active={view === "admin"} onClick={() => setView("admin")} icon={ClientsIcon}>
               All clients
             </NavItem>
           )}
           {isPlatformAdmin && (
-            <NavItem active={view === "console"} onClick={() => setView("console")}>
+            <NavItem active={view === "console"} onClick={() => setView("console")} icon={ConsoleIcon}>
               Training console
             </NavItem>
           )}
@@ -348,7 +355,7 @@ function NavItem({
   active: boolean;
   onClick: () => void;
   dot?: string | null;
-  icon?: LucideIcon;
+  icon?: Icon;
   children: React.ReactNode;
 }) {
   return (
