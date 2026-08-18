@@ -8,7 +8,7 @@ import {
   type SafetyFlag,
 } from "./lib/supabase";
 import { Button } from "./components/ui/button";
-import { Count, Empty, Group, Stat, TabButton } from "./components/screen";
+import { Empty, Group, Stat, TabButton } from "./components/screen";
 import { cn, ist, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
 import { downloadLeadsCsv, leadsFor } from "./lib/leads";
 import { setAiPaused } from "./lib/api";
@@ -469,15 +469,19 @@ export default function Desk({
             one question each, which is what the owner asked for instead of being told.
             "Call back" earned its own tab because the callbacks sit under every waiting
             conversation, so the person doing them scrolled past the whole morning first. */}
-        <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
+        {/* Wrapped, never scrolled sideways: the counts used to ride in the pills and
+            pushed Flagged and All off the right edge, where a tab is not a tab — the two
+            the owner most needs were the two that could not be seen. The numbers are in
+            the two lines directly above, so the pills were saying them twice. */}
+        <div className="mb-4 flex flex-wrap gap-1 px-2 pb-1">
           <TabButton on={tab === "today"} onClick={() => setTab("today")}>
             Today
           </TabButton>
           <TabButton on={tab === "waiting"} onClick={() => setTab("waiting")}>
-            Waiting {waiting.length > 0 && <Count>{waiting.length}</Count>}
+            Waiting
           </TabButton>
           <TabButton on={tab === "calls"} onClick={() => setTab("calls")}>
-            Call back {callToday.length > 0 && <Count>{callToday.length}</Count>}
+            Call back
           </TabButton>
           <TabButton on={tab === "flagged"} onClick={() => setTab("flagged")} dot={flagged.length > 0}>
             Flagged

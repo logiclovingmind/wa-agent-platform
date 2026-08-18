@@ -2,7 +2,7 @@ import { cn } from "../lib/utils";
 
 /**
  * The pieces every client screen is built from. They started inside `Desk.tsx`; the
- * Diary and Flowin redesigns needed the same five, and a copy-paste of them is how the
+ * Diary and Flowin redesigns needed the same four, and a copy-paste of them is how the
  * three screens drift apart again. Nothing here knows what it is listing.
  *
  * `Row` deliberately stayed in `Desk.tsx` — it takes a `Conversation` and safety flags,
@@ -32,10 +32,6 @@ export function TabButton({
       {dot && <span className="h-1.5 w-1.5 rounded-full bg-destructive" />}
     </button>
   );
-}
-
-export function Count({ children }: { children: React.ReactNode }) {
-  return <span className="tabular-nums opacity-60">{children}</span>;
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
