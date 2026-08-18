@@ -12,6 +12,17 @@ export interface LeadRow extends Lead {
 }
 
 /**
+ * Asked in batches because `.in()` puts every id in the query string: two hundred uuids
+ * is a 7KB URL, and the proxies in front of PostgREST cut a request header at 8KB.
+ *
+ * This binds every `.in()` in this file, not just the one it sits next to. The export
+ * used to hand a whole 1000-row chunk to a single call and died on a ~28KB URL, which
+ * came back as a bare "Bad Request" — the status text, because the proxy's response is
+ * not the JSON body supabase-js expects an error message in.
+ */
+const IDS_PER_REQUEST = 100;
+
+/**
  * Two queries rather than one PostgREST embed. `leads` reaches `conversations` through a
  * composite foreign key, and naming the right one in an embed hint is a string that
  * breaks the day the constraint is renamed.
@@ -27,15 +38,18 @@ async function page(from: number, size: number): Promise<{ rows: LeadRow[]; erro
   if (leads.error) return { rows: [], error: leads.error.message };
   if (!leads.data || leads.data.length === 0) return { rows: [], error: null };
 
-  const people = await supabase
-    .from("conversations")
-    .select("id, customer_wa_id, customer_name")
-    .in("id", leads.data.map((l) => l.conversation_id))
-    .returns<Pick<Conversation, "id" | "customer_wa_id" | "customer_name">[]>();
+  const ids = leads.data.map((l) => l.conversation_id);
+  const byId = new Map<string, Pick<Conversation, "id" | "customer_wa_id" | "customer_name">>();
+  for (let i = 0; i < ids.length; i += IDS_PER_REQUEST) {
+    const people = await supabase
+      .from("conversations")
+      .select("id, customer_wa_id, customer_name")
+      .in("id", ids.slice(i, i + IDS_PER_REQUEST))
+      .returns<Pick<Conversation, "id" | "customer_wa_id" | "customer_name">[]>();
 
-  if (people.error) return { rows: [], error: people.error.message };
-
-  const byId = new Map((people.data ?? []).map((c) => [c.id, c]));
+    if (people.error) return { rows: [], error: people.error.message };
+    for (const person of people.data ?? []) byId.set(person.id, person);
+  }
   return {
     error: null,
     rows: leads.data.map((lead) => {
@@ -49,15 +63,7 @@ async function page(from: number, size: number): Promise<{ rows: LeadRow[]; erro
   };
 }
 
-/**
- * What the assistant learned, for the conversations currently on screen.
- *
- * Asked in batches because `.in()` puts every id in the query string: two hundred uuids
- * is a 7KB URL, and the proxies in front of PostgREST cut a request header at 8KB. The
- * failure is a 414 on a screen that would otherwise just be missing its subtitles.
- */
-const IDS_PER_REQUEST = 100;
-
+/** What the assistant learned, for the conversations currently on screen. */
 export async function leadsFor(conversationIds: string[]): Promise<Map<string, Lead>> {
   const found = new Map<string, Lead>();
   for (let i = 0; i < conversationIds.length; i += IDS_PER_REQUEST) {
