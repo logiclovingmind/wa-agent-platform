@@ -299,7 +299,15 @@ describe("erase", () => {
 
     const delTables = calls.filter((c) => c.method === "DELETE").map((c) => c.table);
     expect(delTables).toEqual(expect.arrayContaining(["usage_events", "messages", "conversations"]));
-    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+
+    // Scoped to this conversation rather than "no PATCH at all". `calls` records every
+    // Supabase call made while this test runs, and the debounce alarms the tests above
+    // leave behind fire on a timer — under load one lands here and fails a global
+    // assertion for a reason that has nothing to do with erase.
+    const scrubbed = calls.filter(
+      (c) => c.method === "PATCH" && c.url.searchParams.get("conversation_id") === `eq.${CONV}`,
+    );
+    expect(scrubbed).toHaveLength(0);
   });
 
   it("keeps the safety proof when erasing a flagged conversation", async () => {

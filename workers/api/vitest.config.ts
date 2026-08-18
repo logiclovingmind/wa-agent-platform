@@ -31,5 +31,12 @@ export default defineConfig({
   test: {
     name: "workers",
     include: ["test/**/*.test.ts"],
+    // Serial, like the db project, for a different reason: the debounce alarm is a real
+    // 4-second timer and `stubSupabase` replaces the global fetch. Files racing for CPU
+    // let an alarm from one test fire while another test's recorder is installed, and the
+    // failure then lands on whichever assertion reads "the first call of this method" —
+    // a different test every run, none of them the one that is actually broken.
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 });
