@@ -7,6 +7,7 @@ import {
   DeskIcon,
   DiaryIcon,
   FlowinIcon,
+  SecurityIcon,
   type Icon,
 } from "./components/icons";
 import { cn } from "./lib/utils";
@@ -176,6 +177,7 @@ export default function App() {
             size="sm"
             onClick={() => setView("admin")}
           >
+            <ClientsIcon className="mr-2 hidden h-4 w-4 opacity-70 sm:block" />
             All clients
           </Button>
           <Button
@@ -183,6 +185,7 @@ export default function App() {
             size="sm"
             onClick={() => setView("console")}
           >
+            <ConsoleIcon className="mr-2 hidden h-4 w-4 opacity-70 sm:block" />
             Training console
           </Button>
           <Button
@@ -190,6 +193,7 @@ export default function App() {
             size="sm"
             onClick={() => setView("security")}
           >
+            <SecurityIcon className="mr-2 hidden h-4 w-4 opacity-70 sm:block" />
             Security
           </Button>
           <span className="text-xs text-muted-foreground">

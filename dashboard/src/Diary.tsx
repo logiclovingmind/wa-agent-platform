@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { type HoursRow } from "./lib/api";
-import { Count, Empty, Group, TabButton } from "./components/screen";
+import { Empty, TabButton } from "./components/screen";
 import { cn, dayOfWeek, istDay, istTime, istToday, shiftDay } from "./lib/utils";
 
 /**
@@ -63,7 +63,6 @@ interface Slot {
  * could name: seven days from an anchor that moves is neither "the rest of today" nor
  * "August", so a booking on Thursday was three clicks from being found either way.
  */
-type Tab = "today" | "month";
 
 /**
  * Midnight IST on a `YYYY-MM-DD`, as an instant.
@@ -131,7 +130,6 @@ function dayHeading(day: string): string {
 
 export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
   const today = istToday();
-  const [tab, setTab] = useState<Tab>("today");
   /** The first day of the listed span. Moving it moves the selection with it, which is
       what keeps the open day inside the rows that were fetched. */
   const [anchor, setAnchor] = useState(today);
@@ -154,10 +152,14 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   /** The open day. On a phone `selected` is also what covers the list with the day. */
   const day = selected ?? today;
 
-  // Only the tab and its anchor decide what is fetched, so these are derived rather than
-  // held: two pieces of state that must agree about a date range eventually will not.
-  const from = tab === "today" ? today : shiftMonth(anchor, 0);
-  const to = tab === "today" ? shiftDay(today, 1) : shiftMonth(anchor, 1);
+  // The anchor alone decides what is fetched, so these are derived rather than held: two
+  // pieces of state that must agree about a date range eventually will not.
+  //
+  // One month, always. There used to be a Today tab beside the calendar listing the day's
+  // bookings — the same rows the day pane shows two inches to the right, minus the actions.
+  // The calendar is the thing the rail is for: it finds a date, and the day pane works it.
+  const from = shiftMonth(anchor, 0);
+  const to = shiftMonth(anchor, 1);
 
   useEffect(() => {
     if (!orgId) return;
@@ -402,14 +404,6 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
     setSelected(null);
   }
 
-  /** Switching the span cannot keep the old selection: a day picked in September is not in
-      the range "today", and the day pane would report it as empty rather than unfetched. */
-  function pickTab(next: Tab) {
-    setTab(next);
-    setAnchor(today);
-    setSelected(null);
-  }
-
   /** The grid draws the days either side of the month, and picking one has to take the
       month with it — otherwise the 31st of last month is open and unfetched. */
   function pickCell(cell: string) {
@@ -429,7 +423,6 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const weeks = Array.from({ length: 6 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
 
   const onDay = byDay.get(day) ?? [];
-  const onToday = byDay.get(today) ?? [];
   const blocksOnDay = onDay.filter((b) => b.kind === "block");
   const openDays = new Set((hours ?? []).map((h) => h.weekday));
   const closedOnDay = hours !== null && !openDays.has(dayOfWeek(day));
@@ -438,7 +431,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const auto = real.filter((b) => b.conversation_id !== null).length;
   // Not "this week": the span moves with Back and Next, and a heading that keeps saying
   // "this week" over next month's rows is the kind of wrong nobody notices.
-  const span = tab === "today" ? "today" : `in ${monthLabel(monthOf(anchor))}`;
+  const span = `in ${monthLabel(monthOf(anchor))}`;
 
   const head =
     bookings === null
@@ -466,17 +459,6 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           <p className="text-[15px] text-muted-foreground">{sub}</p>
         </header>
 
-        {/* Today is the default: it is the only span anybody opens this screen to see, and
-            the month beside it is for finding a date rather than working one. */}
-        <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
-          <TabButton on={tab === "today"} onClick={() => pickTab("today")}>
-            Today
-          </TabButton>
-          <TabButton on={tab === "month"} onClick={() => pickTab("month")}>
-            Month
-          </TabButton>
-        </div>
-
         {error && (
           <p className="mx-3 mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
             {error}
@@ -490,19 +472,16 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
           </p>
         )}
 
-        {tab === "month" && (
-          <div className="mb-3 flex items-center gap-2 px-3">
-            <span className="mr-auto text-[13px] text-muted-foreground">
-              {monthLabel(monthOf(anchor))}
-            </span>
-            <Step onClick={() => go(-1)}>Back</Step>
-            <Step onClick={reset}>Today</Step>
-            <Step onClick={() => go(1)}>Next</Step>
-          </div>
-        )}
+        <div className="mb-3 flex items-center gap-2 px-3">
+          <span className="mr-auto text-[13px] text-muted-foreground">
+            {monthLabel(monthOf(anchor))}
+          </span>
+          <Step onClick={() => go(-1)}>Back</Step>
+          <Step onClick={reset}>Today</Step>
+          <Step onClick={() => go(1)}>Next</Step>
+        </div>
 
-        {tab === "month" ? (
-          <div className="px-2">
+        <div className="px-2">
             <div className="grid grid-cols-7 gap-1 pb-1 text-center text-[11px] text-muted-foreground">
               {COLUMNS.map((c) => (
                 <div key={c.dow}>{c.label}</div>
@@ -549,40 +528,7 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
             <p className="px-1 pt-3 text-[13px] text-muted-foreground">
               Shaded days are days you are closed. The assistant offers no times on those.
             </p>
-          </div>
-        ) : bookings === null ? (
-          <Empty>Loading…</Empty>
-        ) : (
-          <Group
-            title="Today"
-            right={
-              <button
-                type="button"
-                onClick={() => setSelected(today)}
-                className={cn("text-[13px]", today === day ? "text-muted-foreground" : "text-blue-600")}
-              >
-                {onToday.length > 0 && <Count>{onToday.length} · </Count>}
-                Open
-              </button>
-            }
-          >
-            {onToday.length === 0 ? (
-              <Empty>{hours !== null && !openDays.has(dayOfWeek(today)) ? "Closed." : "Nothing booked."}</Empty>
-            ) : (
-              onToday.map((b) => (
-                <BookingRow
-                  key={b.id}
-                  b={b}
-                  active={b.id === openBooking}
-                  onPick={() => {
-                    setSelected(today);
-                    setOpenBooking(b.id);
-                  }}
-                />
-              ))
-            )}
-          </Group>
-        )}
+        </div>
       </aside>
 
       <div

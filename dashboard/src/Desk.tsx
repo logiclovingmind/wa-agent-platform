@@ -42,7 +42,7 @@ interface QueueRow extends Conversation {
   intent: string | null;
 }
 
-type Tab = "today" | "waiting" | "flagged" | "all";
+type Tab = "today" | "waiting" | "calls" | "flagged" | "all";
 
 interface DayStats {
   conversations: number;
@@ -331,7 +331,9 @@ export default function Desk({
         ? waiting
         : tab === "flagged"
           ? flagged
-          : [...waiting, ...callToday, ...(showCold ? callCold : [])];
+          : tab === "calls"
+            ? [...callToday, ...(showCold ? callCold : [])]
+            : [...waiting, ...callToday, ...(showCold ? callCold : [])];
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
@@ -428,6 +430,24 @@ export default function Desk({
     );
   }
 
+  /* Aged out rather than deleted. Thirty cold callbacks at the top of a list is why
+     people stop reading the list. Shared by the day's work and the callback tab, which
+     is the same pile seen from two directions. */
+  const coldCallbacks = callCold.length > 0 && (
+    <div className="px-3 pt-1 text-[13px] leading-relaxed text-muted-foreground">
+      {callCold.length} {callCold.length === 1 ? "callback has" : "callbacks have"} gone quiet
+      for over a week.{" "}
+      <button onClick={() => setShowCold((v) => !v)} className="text-blue-600">
+        {showCold ? "Hide" : "Review"}
+      </button>
+      {showCold && (
+        <div className="-mx-3 mt-2">
+          {callCold.map((c) => rowFor(c, { callable: true, dim: true }))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex h-full">
       {/* One pane at a time on a phone, both side by side from `md`. */}
@@ -445,14 +465,19 @@ export default function Desk({
           <p className="text-[15px] text-muted-foreground">{sub}</p>
         </header>
 
-        {/* The sorts. "Today" is the day's work in the order to do it; the other three are
-            one question each, which is what the owner asked for instead of being told. */}
+        {/* The sorts. "Today" is the day's work in the order to do it; the other four are
+            one question each, which is what the owner asked for instead of being told.
+            "Call back" earned its own tab because the callbacks sit under every waiting
+            conversation, so the person doing them scrolled past the whole morning first. */}
         <div className="mb-4 flex gap-1 overflow-x-auto px-2 pb-1">
           <TabButton on={tab === "today"} onClick={() => setTab("today")}>
             Today
           </TabButton>
           <TabButton on={tab === "waiting"} onClick={() => setTab("waiting")}>
             Waiting {waiting.length > 0 && <Count>{waiting.length}</Count>}
+          </TabButton>
+          <TabButton on={tab === "calls"} onClick={() => setTab("calls")}>
+            Call back {callToday.length > 0 && <Count>{callToday.length}</Count>}
           </TabButton>
           <TabButton on={tab === "flagged"} onClick={() => setTab("flagged")} dot={flagged.length > 0}>
             Flagged
@@ -510,6 +535,15 @@ export default function Desk({
           )
         ) : tab === "flagged" ? (
           flagged.map((c) => rowFor(c, { deadline: true }))
+        ) : tab === "calls" ? (
+          <>
+            {callToday.length > 0 ? (
+              callToday.map((c) => rowFor(c, { callable: true }))
+            ) : (
+              <Empty>Nobody to ring back.</Empty>
+            )}
+            {coldCallbacks}
+          </>
         ) : (
           <>
             {waiting.length > 0 && (
@@ -524,22 +558,7 @@ export default function Desk({
               </Group>
             )}
 
-            {/* Aged out rather than deleted. Thirty cold callbacks at the top of a list is
-                why people stop reading the list. */}
-            {callCold.length > 0 && (
-              <div className="px-3 pt-1 text-[13px] leading-relaxed text-muted-foreground">
-                {callCold.length} {callCold.length === 1 ? "callback has" : "callbacks have"} gone
-                quiet for over a week.{" "}
-                <button onClick={() => setShowCold((v) => !v)} className="text-blue-600">
-                  {showCold ? "Hide" : "Review"}
-                </button>
-                {showCold && (
-                  <div className="-mx-3 mt-2">
-                    {callCold.map((c) => rowFor(c, { callable: true, dim: true }))}
-                  </div>
-                )}
-              </div>
-            )}
+            {coldCallbacks}
           </>
         )}
 

@@ -56,14 +56,21 @@ export const DeskIcon: Icon = ({ className }) => (
   </Glyph>
 );
 
-/** The diary — a day with something in it. The dot is a zero-length round cap. */
+/**
+ * The diary — a month, with days in it. The dots are zero-length paths under a round cap.
+ *
+ * No binding rings at the top: two 2px stubs above a chamfer turned into antennae at 16px
+ * and made the whole thing read as a machine rather than a calendar.
+ */
 export const DiaryIcon: Icon = ({ className }) => (
   <Glyph className={className}>
-    <path d="M4 9 L7 6 H17 L20 9 V17 L17 20 H7 L4 17 Z" />
-    <path d="M4 10.5 H20" />
-    <path d="M8.5 3.5 V6" />
-    <path d="M15.5 3.5 V6" />
-    <path d="M12 15 h.01" />
+    <path d="M4 7 L6 5 H18 L20 7 V19 L18 21 H6 L4 19 Z" />
+    <path d="M4 9.5 H20" />
+    <path d="M8.5 13.5 h.01" />
+    <path d="M12 13.5 h.01" />
+    <path d="M15.5 13.5 h.01" />
+    <path d="M8.5 17 h.01" />
+    <path d="M12 17 h.01" />
   </Glyph>
 );
 
@@ -73,6 +80,14 @@ export const ClientsIcon: Icon = ({ className }) => (
     <path d="M3.5 8 L6 5.5 H20.5" />
     <path d="M3.5 13.5 L6 11 H20.5" />
     <path d="M3.5 19 L6 16.5 H20.5" />
+  </Glyph>
+);
+
+/** Security — the mark's own pointed foot, carrying a check. */
+export const SecurityIcon: Icon = ({ className }) => (
+  <Glyph className={className}>
+    <path d="M5 7 L7 5 H17 L19 7 V12 L12 19 L5 12 Z" />
+    <path d="M9 11 L11 13 L15 9" />
   </Glyph>
 );
 

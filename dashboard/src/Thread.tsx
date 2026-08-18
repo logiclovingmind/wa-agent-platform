@@ -269,6 +269,22 @@ export default function Thread({
             Call +{conversation.customer_wa_id}
           </a>
 
+          {/* Beside Call rather than inside the menu, because it is the second half of the
+              same job: you ring them, you say you rang them. Buried under `···` it was two
+              clicks behind a lid, and a callback nobody marks comes back tomorrow as work
+              that looks undone. It disappears once marked — there is nothing to undo. */}
+          {lead && !conversation.followed_up_at && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              className="hidden shrink-0 sm:block"
+              onClick={() => void followUp()}
+            >
+              Mark called back
+            </Button>
+          )}
+
           <div ref={menu} className="relative">
             <Button
               variant="outline"
@@ -292,18 +308,6 @@ export default function Thread({
                 >
                   {human ? "Hand back to the assistant" : "Take over this conversation"}
                 </MenuItem>
-
-                {lead && !conversation.followed_up_at && (
-                  <MenuItem
-                    disabled={busy}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void followUp();
-                    }}
-                  >
-                    Mark called back
-                  </MenuItem>
-                )}
 
                 <MenuItem
                   onClick={() => {
