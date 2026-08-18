@@ -1151,6 +1151,14 @@ const DEFAULT_SLOT = 30;
 
 type Week = Record<number, { opens_at: string; closes_at: string } | undefined>;
 
+type Span = { opens_at: string; closes_at: string };
+
+/** Every open day keeping the same hours — the week that does not need seven rows. */
+function uniform(week: Week): boolean {
+  const open = WEEK.map(({ day }) => week[day]).filter(Boolean) as Span[];
+  return open.every((r) => r.opens_at === open[0]!.opens_at && r.closes_at === open[0]!.closes_at);
+}
+
 export function HoursEditor({
   hours,
   busy,
@@ -1164,6 +1172,9 @@ export function HoursEditor({
   const [week, setWeek] = useState<Week>({});
   const [slot, setSlot] = useState(DEFAULT_SLOT);
   const [dirty, setDirty] = useState(false);
+  /** Whether the days are being timed one by one. Only when the week has two answers in
+      it, or the owner asked — otherwise the hours are typed once and apply to all of them. */
+  const [byDay, setByDay] = useState(false);
 
   useEffect(() => {
     if (!hours) return;
@@ -1176,14 +1187,19 @@ export function HoursEditor({
     // The table stores a slot length per day; this form writes one for the week, because
     // no client has yet wanted a different appointment length on a Tuesday.
     setSlot(hours[0]?.slot_minutes ?? DEFAULT_SLOT);
+    setByDay(!uniform(next));
     setDirty(false);
   }, [hours]);
 
+  const open = WEEK.filter(({ day }) => week[day]);
+  /** What the single pair of boxes shows, and what a day being opened inherits. */
+  const shared: Span = week[open[0]?.day ?? -1] ?? {
+    opens_at: DEFAULT_OPEN,
+    closes_at: DEFAULT_CLOSE,
+  };
+
   function toggle(day: number) {
-    setWeek((w) => ({
-      ...w,
-      [day]: w[day] ? undefined : { opens_at: DEFAULT_OPEN, closes_at: DEFAULT_CLOSE },
-    }));
+    setWeek((w) => ({ ...w, [day]: w[day] ? undefined : { ...shared } }));
     setDirty(true);
   }
 
@@ -1195,7 +1211,30 @@ export function HoursEditor({
     setDirty(true);
   }
 
-  const open = WEEK.filter(({ day }) => week[day]);
+  /** The one pair of boxes writes every open day, which is the whole point of it. */
+  function editAll(field: "opens_at" | "closes_at", value: string) {
+    setWeek((w) => {
+      const next: Week = {};
+      for (const { day } of WEEK) if (w[day]) next[day] = { ...w[day]!, [field]: value };
+      return next;
+    });
+    setDirty(true);
+  }
+
+  /** Back to one set of hours. Written into the week rather than only shown, or the form
+      would say Monday's hours while Thursday quietly kept its own. */
+  function collapse() {
+    if (!uniform(week)) {
+      setWeek(() => {
+        const next: Week = {};
+        for (const { day } of WEEK) if (week[day]) next[day] = { ...shared };
+        return next;
+      });
+      setDirty(true);
+    }
+    setByDay(false);
+  }
+
   const broken = open.some(({ day }) => week[day]!.closes_at <= week[day]!.opens_at);
 
   return (
@@ -1239,36 +1278,82 @@ export function HoursEditor({
           : `The assistant offers free ${slot}-minute slots inside these hours, up to a week ahead, and books the one the customer picks.`}
       </p>
 
-      {WEEK.map(({ day, label }) => {
-        const row = week[day];
-        return (
-          <div key={day} className="flex items-center gap-2">
-            <label className="flex w-16 items-center gap-1.5">
-              <input type="checkbox" checked={!!row} onChange={() => toggle(day)} />
-              {label}
-            </label>
-            {row ? (
-              <>
-                <input
-                  type="time"
-                  value={row.opens_at}
-                  onChange={(e) => edit(day, "opens_at", e.target.value)}
-                  className={FIELD}
-                />
-                <span className="text-muted-foreground">–</span>
-                <input
-                  type="time"
-                  value={row.closes_at}
-                  onChange={(e) => edit(day, "closes_at", e.target.value)}
-                  className={cn(FIELD, row.closes_at <= row.opens_at && "border-destructive")}
-                />
-              </>
-            ) : (
-              <span className="text-muted-foreground">closed</span>
+      {/* Which days are open, as one row. Seven ticked lines carrying the same two times
+          was the shape of the table, not of the decision: a business has hours, and then
+          at most one day that is different. */}
+      <div className="flex flex-wrap gap-1 pt-1">
+        {WEEK.map(({ day, label }) => (
+          <button
+            key={day}
+            type="button"
+            aria-pressed={!!week[day]}
+            onClick={() => toggle(day)}
+            className={cn(
+              "rounded-md px-2.5 py-1",
+              week[day]
+                ? "bg-foreground text-background"
+                : "border border-border text-muted-foreground",
             )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {open.length > 0 &&
+        (byDay ? (
+          <div className="space-y-1.5 pt-1">
+            {/* Only the open days. A closed one has nothing to time, and its row was three
+                quarters of this form saying "closed". */}
+            {open.map(({ day, label }) => {
+              const row = week[day]!;
+              return (
+                <div key={day} className="flex items-center gap-2">
+                  <span className="w-10 shrink-0 text-muted-foreground">{label}</span>
+                  <input
+                    type="time"
+                    aria-label={`${label} opens`}
+                    value={row.opens_at}
+                    onChange={(e) => edit(day, "opens_at", e.target.value)}
+                    className={FIELD}
+                  />
+                  <span className="text-muted-foreground">–</span>
+                  <input
+                    type="time"
+                    aria-label={`${label} closes`}
+                    value={row.closes_at}
+                    onChange={(e) => edit(day, "closes_at", e.target.value)}
+                    className={cn(FIELD, row.closes_at <= row.opens_at && "border-destructive")}
+                  />
+                </div>
+              );
+            })}
+            <button type="button" onClick={collapse} className="text-blue-600">
+              Same hours every day
+            </button>
           </div>
-        );
-      })}
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <input
+              type="time"
+              aria-label="Opens"
+              value={shared.opens_at}
+              onChange={(e) => editAll("opens_at", e.target.value)}
+              className={FIELD}
+            />
+            <span className="text-muted-foreground">–</span>
+            <input
+              type="time"
+              aria-label="Closes"
+              value={shared.closes_at}
+              onChange={(e) => editAll("closes_at", e.target.value)}
+              className={cn(FIELD, broken && "border-destructive")}
+            />
+            <button type="button" onClick={() => setByDay(true)} className="text-blue-600">
+              One day is different
+            </button>
+          </div>
+        ))}
 
       {broken && <p className="text-destructive">A day has to close after it opens.</p>}
     </div>

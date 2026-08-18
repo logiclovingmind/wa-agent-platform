@@ -1329,32 +1329,23 @@ interface HoursRow {
 }
 
 const HOURS_COLUMNS = "id,weekday,opens_at,closes_at,slot_minutes";
-const APPOINTMENT_COLUMNS = "id,starts_at,duration_minutes,customer_name,service,status,kind";
 
+/*
+ * The upcoming bookings came back with the hours until now, for a list in the training
+ * console. The console exists to set a demo's hours and try the bot against them; the
+ * bookings a demo makes are worked on the client's own Diary screen, which cancels,
+ * reschedules and marks them. So the list here was a second query whose rows nobody read.
+ */
 admin.get("/api/admin/hours/:orgId", async (c) => {
   const db = createOrgDb(c.env, c.req.param("orgId"));
 
-  // Together: neither read depends on the other and the panel shows both at once.
-  const [hours, appointments] = await Promise.all([
-    db.select("business_hours", HOURS_COLUMNS).order("weekday", { ascending: true })
-      .returns<HoursRow[]>(),
-    db
-      .select("appointments", APPOINTMENT_COLUMNS)
-      // Only what is still ahead and still standing. A diary is a thing you act on: last
-      // month's bookings are egress nobody reads, and a cancelled row is a slot that is
-      // free again everywhere else, so listing it here is the one place it looks taken.
-      .gte("starts_at", new Date().toISOString())
-      .neq("status", "cancelled")
-      .order("starts_at", { ascending: true })
-      .returns<Array<Record<string, unknown>>>(),
-  ]);
+  const { data, error } = await db
+    .select("business_hours", HOURS_COLUMNS)
+    .order("weekday", { ascending: true })
+    .returns<HoursRow[]>();
+  if (error) throw new Error(`business_hours read failed: ${error.message}`);
 
-  if (hours.error) throw new Error(`business_hours read failed: ${hours.error.message}`);
-  if (appointments.error) {
-    throw new Error(`appointments read failed: ${appointments.error.message}`);
-  }
-
-  return c.json({ hours: hours.data ?? [], appointments: appointments.data ?? [] });
+  return c.json({ hours: data ?? [] });
 });
 
 /**
@@ -1395,31 +1386,6 @@ admin.put("/api/admin/hours/:orgId", async (c) => {
   if (auditError) throw new Error(`audit_log insert failed: ${auditError.message}`);
 
   return c.json({ hours: rows.length });
-});
-
-/**
- * Cancels a booking. Never deletes it: `free_slots` treats a cancelled row as free again,
- * and the row is the only record that this customer was ever told they had this time.
- */
-admin.delete("/api/admin/appointments/:orgId/:id", async (c) => {
-  const db = createOrgDb(c.env, c.req.param("orgId"));
-
-  const { data, error } = await db
-    .update("appointments", { status: "cancelled" })
-    .eq("id", c.req.param("id"))
-    .select(APPOINTMENT_COLUMNS)
-    .maybeSingle<{ id: string; starts_at: string }>();
-  if (error) throw new Error(`appointment cancel failed: ${error.message}`);
-  if (!data) return c.json({ error: "unknown appointment" }, 404);
-
-  const { error: auditError } = await db.insert("audit_log", {
-    actor_user_id: c.get("caller").userId,
-    action: "appointment_cancelled",
-    detail: { appointment_id: data.id, starts_at: data.starts_at },
-  });
-  if (auditError) throw new Error(`audit_log insert failed: ${auditError.message}`);
-
-  return c.json({ cancelled: data.id });
 });
 
 /**

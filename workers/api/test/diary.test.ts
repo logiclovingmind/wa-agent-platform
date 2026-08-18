@@ -5,14 +5,10 @@ import { stubSupabase, type RestCall } from "./fake-supabase.js";
 
 const ORG_A = "11111111-1111-1111-1111-111111111111";
 const ADMIN = "55555555-5555-5555-5555-555555555555";
-const APPT = "aaaaaaaa-0000-4000-8000-00000000000a";
 
 interface Scenario {
   admin?: boolean;
   hours?: Array<Record<string, unknown>>;
-  appointments?: Array<Record<string, unknown>>;
-  /** What the cancel is answered with — empty means "no row matched". */
-  cancelled?: Array<Record<string, unknown>>;
 }
 
 function harness(scenario: Scenario = {}) {
@@ -25,9 +21,6 @@ function harness(scenario: Scenario = {}) {
           return [{ id: ADMIN, email: "admin@x.test", is_platform_admin: scenario.admin !== false }];
         case "business_hours":
           return call.method === "GET" ? (scenario.hours ?? []) : [];
-        case "appointments":
-          if (call.method === "GET") return scenario.appointments ?? [];
-          return scenario.cancelled ?? [{ id: APPT, starts_at: "2026-08-18T05:00:00Z" }];
         default:
           return [];
       }
@@ -71,18 +64,18 @@ describe("diary", () => {
     harness({ admin: false });
     expect((await call("GET", `/api/admin/hours/${ORG_A}`)).status).toBe(403);
     expect((await call("PUT", `/api/admin/hours/${ORG_A}`, { hours: [day(1)] })).status).toBe(403);
-    expect((await call("DELETE", `/api/admin/appointments/${ORG_A}/${APPT}`)).status).toBe(403);
   });
 
-  // A cancelled row is free again in `free_slots` and a past one cannot be acted on, so
-  // either one in this list is the single place the diary disagrees with the bot.
-  it("asks only for bookings that are ahead and still standing", async () => {
-    const rest = harness();
+  // This route used to return the upcoming bookings beside the hours, for a list in the
+  // training console that has been taken out: the console sets a demo's hours, and the
+  // bookings are worked on the client's own Diary screen. Asserted rather than assumed,
+  // because the rows are egress against a 5GB budget shared by every client.
+  it("reads the hours and nothing else", async () => {
+    const rest = harness({ hours: [day(1)] });
     expect((await call("GET", `/api/admin/hours/${ORG_A}`)).status).toBe(200);
 
-    const query = on(rest, "GET", "appointments")[0]!.url.searchParams;
-    expect(query.get("status")).toBe("neq.cancelled");
-    expect(query.get("starts_at")).toMatch(/^gte\./);
+    expect(on(rest, "GET", "business_hours")).toHaveLength(1);
+    expect(rest.filter((c) => c.table.split("?")[0] === "appointments")).toHaveLength(0);
   });
 
   it("replaces the whole week, so a day left out is a day the client is closed", async () => {
@@ -130,33 +123,5 @@ describe("diary", () => {
     await call("PUT", `/api/admin/hours/${ORG_A}`, { hours: [day(1)] });
 
     expect(rest.filter((c) => c.table.split("?")[0] === "appointments")).toHaveLength(0);
-  });
-
-  it("cancels a booking rather than deleting it", async () => {
-    const rest = harness();
-
-    const res = await call("DELETE", `/api/admin/appointments/${ORG_A}/${APPT}`);
-    expect(res.status).toBe(200);
-
-    expect(on(rest, "DELETE", "appointments")).toHaveLength(0);
-    const patch = on(rest, "PATCH", "appointments")[0]!;
-    expect(patch.body).toEqual({ status: "cancelled" });
-    expect(patch.url.searchParams.get("id")).toBe(`eq.${APPT}`);
-
-    expect(on(rest, "POST", "audit_log")[0]!.body).toEqual([
-      {
-        org_id: ORG_A,
-        actor_user_id: ADMIN,
-        action: "appointment_cancelled",
-        detail: { appointment_id: APPT, starts_at: "2026-08-18T05:00:00Z" },
-      },
-    ]);
-  });
-
-  it("404s on an appointment that is not this org's", async () => {
-    const rest = harness({ cancelled: [] });
-
-    expect((await call("DELETE", `/api/admin/appointments/${ORG_A}/${APPT}`)).status).toBe(404);
-    expect(on(rest, "POST", "audit_log")).toHaveLength(0);
   });
 });

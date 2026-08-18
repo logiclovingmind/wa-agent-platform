@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase, type AdminOrg } from "./lib/supabase";
 import {
-  cancelAppointment,
   consoleRun,
   diary,
   kbCreate,
@@ -10,7 +9,6 @@ import {
   kbUpdate,
   setControls,
   setHours,
-  type Appointment,
   type ConsoleRun,
   type ConsoleTurn,
   type HoursRow,
@@ -18,7 +16,7 @@ import {
   type KbList,
   type OrgControls,
 } from "./lib/api";
-import { inr, ist } from "./lib/utils";
+import { inr } from "./lib/utils";
 import { ResetDemo } from "./DemoReset";
 import { HoursEditor } from "./Diary";
 
@@ -691,54 +689,29 @@ function Kb({ orgId }: { orgId: string }) {
  */
 function Diary({ orgId }: { orgId: string }) {
   const [hours, setHoursRows] = useState<HoursRow[] | null>(null);
-  const [booked, setBooked] = useState<Appointment[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setHoursRows(null);
-    setBooked(null);
     setError(null);
     if (!orgId) return;
 
     let live = true;
     void diary(orgId)
-      .then((d) => {
-        if (!live) return;
-        setHoursRows(d.hours);
-        setBooked(d.appointments);
-      })
+      .then((d) => live && setHoursRows(d.hours))
       .catch((e) => live && setError(message(e)));
     return () => {
       live = false;
     };
   }, [orgId]);
 
-  async function reload() {
-    const d = await diary(orgId);
-    setHoursRows(d.hours);
-    setBooked(d.appointments);
-  }
-
   async function save(next: HoursRow[]) {
     setBusy(true);
     setError(null);
     try {
       await setHours(orgId, next);
-      await reload();
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancel(id: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await cancelAppointment(orgId, id);
-      await reload();
+      setHoursRows((await diary(orgId)).hours);
     } catch (e) {
       setError(message(e));
     } finally {
@@ -751,33 +724,6 @@ function Diary({ orgId }: { orgId: string }) {
       <div className="uppercase tracking-wide text-muted-foreground">Diary</div>
 
       <HoursEditor hours={hours} busy={busy} onSave={save} />
-
-      {booked && booked.length > 0 && (
-        <div className="space-y-1 pt-2">
-          <div className="uppercase tracking-wide text-muted-foreground">Booked</div>
-          {booked.map((a) => (
-            <div key={a.id} className="flex items-center gap-2">
-              <span className="flex-1 truncate">
-                {ist(a.starts_at)}
-                {" — "}
-                {a.kind === "block"
-                  ? "blocked out"
-                  : [a.customer_name, a.service].filter(Boolean).join(", ") || "no name given"}
-              </span>
-              {/* Cancelled, never deleted: the row is the only proof this customer was
-                  ever told they had this time, and `free_slots` offers it again either way. */}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void cancel(a.id)}
-                className="text-destructive"
-              >
-                Cancel
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       {error && <p className="text-destructive">{error}</p>}
     </div>

@@ -329,6 +329,47 @@ describe("demo_setup_save and demo_setup_load", () => {
     expect(after.kb).toEqual([{ title: "Sharma Dental — fees", raw: "pasted for a prospect" }]);
   });
 
+  // Showing the same prospect a second time is load, demo, reset — and the reset used to
+  // file another identical row each time round, because a restored KB satisfies the
+  // "the walk-in pasted something" test just as the original did.
+  //
+  // The second document is what makes this test worth having: it is inserted after the
+  // first, so the capture holds it second, but `demo_setup_load` rebuilds both in one
+  // statement and they end up sharing a `created_at`. The overlay is then captured in
+  // title order instead, and comparing the two jsonb arrays directly would call one
+  // overlay two.
+  it("files no second row when the same overlay is reset twice", async () => {
+    const labels = await asUser(db, admin, async () => {
+      await db.query("set local role postgres");
+      await db.query("insert into kb_documents (org_id, title, raw) values ($1, $2, $3)", [
+        fx.orgA,
+        "Address and parking",
+        "behind the bus stand",
+      ]);
+
+      await db.query("set local role authenticated");
+      await db.query("select * from public.demo_reset()");
+
+      await db.query("set local role postgres");
+      const id = (
+        await db.query<{ id: string }>("select id from demo_setups where org_id = $1", [fx.orgA])
+      ).rows[0]!.id;
+
+      await db.query("set local role authenticated");
+      await db.query("select public.demo_setup_load($1)", [id]);
+      await db.query("select * from public.demo_reset()");
+
+      await db.query("set local role postgres");
+      return (
+        await db.query<{ label: string }>("select label from demo_setups where org_id = $1", [
+          fx.orgA,
+        ])
+      ).rows;
+    });
+
+    expect(labels).toHaveLength(1);
+  });
+
   it("refuses a setup id belonging to another org", async () => {
     await expect(
       asUser(db, admin, async () => {

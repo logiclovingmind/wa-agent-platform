@@ -329,21 +329,8 @@ export interface HoursRow {
   slot_minutes: number;
 }
 
-export interface Appointment {
-  id: string;
-  starts_at: string;
-  duration_minutes: number;
-  customer_name: string | null;
-  service: string | null;
-  status: string;
-  /** `block` is time the owner marked unavailable, not a customer. */
-  kind: string;
-}
-
 export interface Diary {
   hours: Array<HoursRow & { id: string }>;
-  /** Ahead of now only, soonest first. */
-  appointments: Appointment[];
 }
 
 export async function diary(orgId: string): Promise<Diary> {
@@ -362,18 +349,6 @@ export async function setHours(orgId: string, hours: HoursRow[]): Promise<void> 
     method: "PUT",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ hours }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-}
-
-export async function cancelAppointment(orgId: string, id: string): Promise<void> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("signed out");
-
-  const res = await fetch(`${BASE}/api/admin/appointments/${orgId}/${id}`, {
-    method: "DELETE",
-    headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(await res.text());
 }
