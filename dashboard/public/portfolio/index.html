@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#101014" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <title>WhatsApp AI Assistant, Logic Loving Mind</title>
+    <link rel="preload" href="fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="fonts.css" />
+    <style>
+      /* A deck, not a page. One idea per slide, set at a size that survives being read on
+         a phone, which is where this gets opened. Landscape in print because the product
+         screenshots are landscape: portrait pages shrink them to the width of a column,
+         which is what made the first version unreadable. */
+      :root {
+        --ink: #0e0e12;
+        --paper: #ffffff;
+        --dim: #6b6b76;
+        --dim-d: #a2a2ae;
+        --line: #e6e6eb;
+        --line-d: rgba(255, 255, 255, 0.14);
+        --wash: #e9e9ee;
+        --go: #10b981;
+        --warn: #f59e0b;
+        --stop: #e5484d;
+        /* Space Grotesk for anything set large: squared terminals, flat-sided round
+           letters and a slightly technical geometry, which is what the wordmark's own
+           drawing does. Manrope carries the reading copy, geometric enough to sit under
+           it without the two looking like a collision. */
+        --display: "Space Grotesk", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+        --sans: "Manrope", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+
+      body {
+        margin: 0;
+        padding: 26px 20px 40px;
+        background: var(--wash);
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: 17px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      .slide {
+        position: relative;
+        max-width: 1080px;
+        margin: 0 auto 20px;
+        padding: 60px 64px;
+        background: var(--paper);
+        border-radius: 6px;
+        box-shadow:
+          0 1px 2px rgba(14, 14, 18, 0.06),
+          0 18px 44px -20px rgba(14, 14, 18, 0.22);
+        overflow: hidden;
+      }
+
+      /* The single point of light is a background image on the slide rather than an
+         ::before overlay: a positioned pseudo-element paints over static content, and
+         the usual fix, position: relative on every child, would undo the absolute
+         placement of the slide number. */
+      .slide.dark {
+        background-color: var(--ink);
+        background-image: radial-gradient(
+          120% 90% at 88% -10%,
+          rgba(160, 14, 118, 0.28),
+          transparent 58%
+        );
+        color: var(--paper);
+      }
+      .dark .dim { color: var(--dim-d); }
+
+      /* Slide index, quietly, in the corner. */
+      .n {
+        position: absolute;
+        top: 30px;
+        right: 32px;
+        font-family: var(--display);
+        font-weight: 500;
+        font-size: 13px;
+        letter-spacing: 0.16em;
+        color: #b8b8c2;
+        font-variant-numeric: tabular-nums;
+      }
+      .dark .n { color: #55555f; }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--display);
+        font-size: 13.5px;
+        /* The wordmark is set on very wide tracking. Echoing it here is the cheapest way
+           to make the deck read as the same brand. */
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+        font-weight: 600;
+        color: var(--dim);
+        margin-bottom: 24px;
+      }
+      .tag::before {
+        content: "";
+        width: 22px;
+        height: 2px;
+        background: currentColor;
+        opacity: 0.55;
+      }
+      .dark .tag { color: #8c8c99; }
+
+      h1 {
+        margin: 0;
+        font-family: var(--display);
+        font-size: clamp(38px, 6.6vw, 78px);
+        line-height: 1.0;
+        letter-spacing: -0.03em;
+        font-weight: 700;
+      }
+      h2 {
+        margin: 0 0 30px;
+        font-family: var(--display);
+        font-size: clamp(28px, 4.1vw, 47px);
+        line-height: 1.08;
+        letter-spacing: -0.026em;
+        font-weight: 700;
+      }
+      h2 .soft { color: #a8a8b4; font-weight: 700; }
+      .dark h2 .soft { color: #6a6a76; }
+
+      p { margin: 0 0 16px; }
+      p:last-child { margin-bottom: 0; }
+      .dim { color: var(--dim); }
+      .big {
+        font-size: clamp(18px, 2.2vw, 25px);
+        line-height: 1.38;
+        letter-spacing: -0.014em;
+      }
+
+      /* Cover */
+      .brand { display: flex; align-items: center; gap: 20px; margin-bottom: 72px; }
+      .brand img.mark { width: 62px; height: 62px; }
+      .brand img.word { width: 330px; }
+      .dark .brand img.word { filter: invert(1); }
+
+      .for {
+        margin-top: 72px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line-d);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 56px;
+        font-size: 16px;
+      }
+      .for b { font-weight: 600; color: #fff; }
+
+      /* Numbers */
+      .figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; }
+      .fig-n {
+        font-family: var(--display);
+        font-size: clamp(52px, 7.6vw, 88px);
+        line-height: 1;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        font-variant-numeric: tabular-nums;
+      }
+      .fig-l {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line);
+        font-size: 17px;
+        color: var(--dim);
+        line-height: 1.35;
+      }
+      .dark .fig-l { color: var(--dim-d); border-top-color: var(--line-d); }
+
+      /* Screens. The frame is what keeps a screenshot from reading as a stray image. */
+      .shot,
+      .crop {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 10px 28px -18px rgba(14, 14, 18, 0.4);
+      }
+
+      .zoom {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 34px;
+        align-items: center;
+      }
+      .stack > .crop { margin-bottom: 26px; }
+
+      .callout { font-size: 18.5px; line-height: 1.46; }
+      .callout b { font-weight: 650; }
+      .rule {
+        width: 44px;
+        height: 4px;
+        background: var(--ink);
+        margin-bottom: 18px;
+        border-radius: 2px;
+      }
+      .rule.red { background: var(--stop); }
+      .rule.green { background: var(--go); }
+      .rule.amber { background: var(--warn); }
+
+      /* Claim list */
+      .claims { display: grid; grid-template-columns: 1fr 1fr; gap: 30px 46px; }
+      .claim { border-top: 1px solid var(--line); padding-top: 18px; }
+      .claim h3 {
+        margin: 0 0 8px;
+        font-family: var(--display);
+        font-size: 22px;
+        letter-spacing: -0.018em;
+        font-weight: 700;
+      }
+      .claim p { font-size: 16.5px; color: var(--dim); }
+
+      /* Pricing */
+      .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+      .plan {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 26px 24px 28px;
+      }
+      .plan .what { font-size: 16px; color: var(--dim); }
+      .plan .amt {
+        margin-top: 12px;
+        font-family: var(--display);
+        font-size: clamp(34px, 4.2vw, 48px);
+        font-weight: 700;
+        letter-spacing: -0.032em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+      .plan .amt small { font-size: 0.58em; font-weight: 500; letter-spacing: 0; margin-right: 3px; }
+      .plan .per { margin-top: 10px; font-size: 15.5px; color: var(--dim); }
+      .ladder { margin-top: 12px; }
+      .ladder div {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 16px;
+        padding: 8px 0;
+        border-top: 1px solid var(--line-d);
+        font-size: 16px;
+      }
+      .ladder div:first-child { border-top: none; padding-top: 2px; }
+      .ladder b {
+        font-family: var(--display);
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+      }
+      .plan .resell {
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        font-size: 15.5px;
+      }
+      .plan .resell b { font-weight: 700; }
+      .plan.hero { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+      .plan.hero .what, .plan.hero .per { color: var(--dim-d); }
+      .plan.hero .resell { border-top-color: var(--line-d); }
+
+      .terms {
+        margin-top: 26px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px 30px;
+        font-size: 15px;
+        color: var(--dim);
+      }
+      .terms b { color: var(--ink); font-weight: 600; }
+
+      /* Split */
+      .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; }
+      .duo h3 {
+        margin: 0 0 10px;
+        font-family: var(--display);
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+      }
+      .duo p { font-size: 16.5px; color: var(--dim); }
+      .dark .duo > div { border-top: 1px solid var(--line-d); padding-top: 18px; }
+
+      .foot {
+        margin-top: 52px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line-d);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 17px;
+      }
+      .foot img { width: 30px; height: 30px; }
+      .foot a { color: var(--paper); }
+
+      /* Screen only. Chrome evaluates print at roughly 793px, so an unscoped max-width
+         query collapses every grid in the PDF to a single column. */
+      @media screen and (max-width: 900px) {
+        body { padding: 12px 12px 24px; font-size: 16px; }
+        .slide { padding: 30px 22px 34px; margin-bottom: 12px; }
+        .n { top: 20px; right: 20px; font-size: 11px; }
+        h2 { margin-bottom: 22px; }
+        .brand { margin-bottom: 40px; gap: 13px; }
+        .brand img.mark { width: 46px; height: 46px; }
+        .brand img.word { width: 210px; }
+        .for { margin-top: 38px; gap: 6px 26px; font-size: 15px; }
+        .figures { grid-template-columns: 1fr; gap: 24px; }
+        .zoom, .claims, .duo, .plans, .terms { grid-template-columns: 1fr; gap: 22px; }
+        .zoom { gap: 20px; }
+        .stack > .crop { margin-bottom: 20px; }
+        .callout { font-size: 17px; }
+        .foot { margin-top: 36px; }
+      }
+
+      @media print {
+        @page { size: A4 landscape; margin: 0; }
+        body { background: #fff; padding: 0; font-size: 12.5pt; }
+        .slide {
+          max-width: none;
+          width: 297mm;
+          height: 209.4mm; /* a hair under the sheet, so no slide spills a blank page */
+          margin: 0;
+          padding: 16mm 20mm;
+          border-radius: 0;
+          box-shadow: none;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          break-after: page;
+        }
+        .slide:last-child { break-after: auto; }
+        .slide.dark,
+        .plan.hero,
+        .rule, .rule.red, .rule.green, .rule.amber {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .n { top: 12mm; right: 14mm; font-size: 8pt; }
+        h1 { font-size: 48pt; }
+        h2 { font-size: 29pt; margin-bottom: 8mm; }
+        .big { font-size: 15pt; }
+        .fig-n { font-size: 52pt; }
+        .plan .amt { font-size: 29pt; }
+        /* Height-capped with the width left to follow, rather than object-fit: contain.
+           Contain letterboxes inside a full-width box, so the border ends up drawn
+           around a band of empty paper instead of around the screenshot. */
+        .shot, .crop {
+          box-shadow: none;
+          width: auto;
+          max-width: 100%;
+          margin-inline: auto;
+        }
+        .shot { max-height: 126mm; }
+        .zoom > .crop { max-height: 112mm; }
+        .stack > .crop { max-height: 114mm; }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- 01. Cover -->
+    <section class="slide dark">
+      <div class="brand">
+        <img class="mark" src="logo-gradient.svg" alt="" />
+        <img class="word" src="../wordmark.svg" alt="Logic Loving Mind" />
+      </div>
+
+      <h1>Your client's<br />WhatsApp, answered.</h1>
+      <p class="big dim" style="margin-top: 28px; max-width: 33ch">
+        It replies day and night, it sounds like the business, it books the appointment,
+        and it knows when to fetch a real person.
+      </p>
+
+      <div class="for">
+        <span class="dim">Prepared for <b>First Step Digital Agency</b></span>
+        <span class="dim">August 2026</span>
+        <span class="dim">hey@logiclovingmind.com</span>
+      </div>
+    </section>
+
+    <!-- 02. Proof -->
+    <section class="slide">
+      <span class="n">02</span>
+      <span class="tag">One month, one business</span>
+      <h2>What it did while<br />nobody was watching.</h2>
+      <div class="figures">
+        <div>
+          <div class="fig-n">85<span style="font-size: 0.48em">%</span></div>
+          <div class="fig-l">of replies went out without anyone on the team lifting a finger</div>
+        </div>
+        <div>
+          <div class="fig-n">421</div>
+          <div class="fig-l">questions answered after the business had closed for the day</div>
+        </div>
+        <div>
+          <div class="fig-n">8<span style="font-size: 0.48em">s</span></div>
+          <div class="fig-l">is how long a customer waited for a real answer, not a holding message</div>
+        </div>
+      </div>
+      <p class="dim" style="margin-top: 34px; font-size: 15.5px">
+        Real numbers from the demo you can log into. Nothing here is an estimate.
+      </p>
+    </section>
+
+    <!-- 03. Desk -->
+    <section class="slide">
+      <span class="n">03</span>
+      <span class="tag">Screen one</span>
+      <h2>Desk. <span class="soft">Every chat, as it happens.</span></h2>
+      <img class="shot" src="shots/desk.png" alt="The Desk screen" />
+    </section>
+
+    <!-- 04. Safety flags -->
+    <section class="slide">
+      <span class="n">04</span>
+      <span class="tag">Screen one, up close</span>
+      <h2>It stopped itself,<br />twice, in one day.</h2>
+      <div class="zoom">
+        <img class="crop" src="shots/desk-flags.png" alt="Two conversations flagged for a human" />
+        <div class="callout">
+          <div class="rule red"></div>
+          <b>One customer turned out to be a child. Another was clearly upset.</b> The
+          assistant said nothing more to either of them and passed both straight to the
+          owner. This is your answer when a client asks what happens if it says the wrong
+          thing.
+        </div>
+      </div>
+    </section>
+
+    <!-- 05. Takeover -->
+    <section class="slide">
+      <span class="n">05</span>
+      <span class="tag">Screen one, the control</span>
+      <h2>The owner is always in charge.</h2>
+      <div class="stack">
+        <img class="crop" src="shots/desk-pause.png" alt="Pausing the assistant from the Desk" />
+        <div class="callout">
+          <div class="rule"></div>
+          <b>One tap and the owner takes over.</b> The assistant steps back, either for that
+          one customer or for the whole business, and everything that comes in sits and
+          waits until the owner replies. Names and numbers download as a spreadsheet.
+        </div>
+      </div>
+    </section>
+
+    <!-- 06. Diary -->
+    <section class="slide">
+      <span class="n">06</span>
+      <span class="tag">Screen two</span>
+      <h2>Diary. <span class="soft">It books, they turn up.</span></h2>
+      <div class="stack">
+        <img class="crop" src="shots/diary-today.png" alt="Today's bookings" />
+        <div class="callout">
+          <div class="rule green"></div>
+          <b>Appointments the assistant made, on a day view anyone at the front desk can
+          read.</b> Block off time, move a booking, tick who arrived. If somebody does not
+          turn up, it comes back as a job to chase rather than being forgotten.
+        </div>
+      </div>
+    </section>
+
+    <!-- 07. Flowin -->
+    <section class="slide">
+      <span class="n">07</span>
+      <span class="tag">Screen three</span>
+      <h2>Flowin. <span class="soft">Proof it was worth paying for.</span></h2>
+      <div class="stack">
+        <img class="crop" src="shots/flowin-headline.png" alt="Coverage and volume" />
+        <div class="callout">
+          <div class="rule amber"></div>
+          <b>This is the screen your client opens when they are deciding whether to keep
+          paying you.</b> It answers that in one number and one sentence. There is no chart
+          to work out.
+        </div>
+      </div>
+    </section>
+
+    <!-- 08. Why -->
+    <section class="slide">
+      <span class="n">08</span>
+      <span class="tag">Next to what they have already been sold</span>
+      <h2>Four things that<br />win the deal.</h2>
+      <div class="claims">
+        <div class="claim">
+          <h3>It replies on its own.</h3>
+          <p>
+            Most WhatsApp tools are just a shared inbox. Somebody still has to sit there and
+            type. That person's salary was always the real cost.
+          </p>
+        </div>
+        <div class="claim">
+          <h3>It sounds like the business.</h3>
+          <p>
+            Its services, its prices, its way of speaking. A clinic sounds like a clinic, a
+            salon sounds like a salon. Change it by writing a normal sentence and the very
+            next reply follows.
+          </p>
+        </div>
+        <div class="claim">
+          <h3>It runs on WhatsApp's own service.</h3>
+          <p>
+            The client's real number, verified and set up the way WhatsApp intends. Not an
+            old handset in a drawer that gets blocked three months in.
+          </p>
+        </div>
+        <div class="claim">
+          <h3>Your twentieth client costs what your second did.</h3>
+          <p>
+            Nothing new to buy or set up at our end when you add one. That is where your
+            profit comes from.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09. Safety -->
+    <section class="slide dark">
+      <span class="n">09</span>
+      <span class="tag">The part nobody else will show you</span>
+      <h2>When it should not<br />answer, it does not.</h2>
+      <div class="duo">
+        <div>
+          <h3>It stops. It does not guess.</h3>
+          <p class="dim">
+            If somebody is upset, talks about hurting themselves, or turns abusive, the
+            assistant stops writing and a person is brought in at once. If the customer
+            seems to be a child, it stops for good. It never leaves anybody sitting in
+            silence.
+          </p>
+        </div>
+        <div>
+          <h3>Built for India's data law.</h3>
+          <p class="dim">
+            Any customer's details can be sent to them or wiped on request. Nothing is kept
+            longer than a year. Every business's data is held apart from every other one.
+            The agreement your clients will ask for is written and ready to sign.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. Money -->
+    <section class="slide">
+      <span class="n">10</span>
+      <span class="tag">Your price, per client, in rupees</span>
+      <h2>What you pay us.</h2>
+      <div class="plans">
+        <div class="plan">
+          <div class="what">Setting a client up, once</div>
+          <div class="amt"><small>₹</small>15,000</div>
+          <div class="per">The number, the paperwork, what it knows, how it talks, going live</div>
+          <div class="resell">You sell at <b>₹30,000 to 40,000</b></div>
+        </div>
+        <div class="plan hero">
+          <div class="what">Platform, support and upkeep</div>
+          <div class="ladder">
+            <div><span>1 to 2 clients</span><b>₹36,000</b></div>
+            <div><span>3 to 5 clients</span><b>₹30,000</b></div>
+            <div><span>6 or more</span><b>₹24,000</b></div>
+          </div>
+          <div class="per">Per client, per year. The more you run, the less each one costs.</div>
+          <div class="resell">You sell at <b>₹6,000 to 8,000</b> a month</div>
+        </div>
+        <div class="plan">
+          <div class="what">Replies included</div>
+          <div class="amt">10,000</div>
+          <div class="per">Per client, per year. Buy more in blocks of 5,000.</div>
+          <div class="resell">Enough for a busy clinic, salon or institute</div>
+        </div>
+      </div>
+      <div class="terms">
+        <div>
+          <b>Your price drops as you grow.</b> Sign a sixth client and the first five move to
+          the cheaper rate when they next renew. Nothing to renegotiate.
+        </div>
+        <div>
+          <b>Paid a year or three months ahead.</b> A year is charged as ten months. Extra
+          blocks of replies are priced when you buy them, and that price holds for the rest
+          of the term.
+        </div>
+        <div>
+          <b>WhatsApp's own message charges are passed to you at cost</b>, listed
+          separately. WhatsApp begins charging for these chats on 1 October 2026. GST on
+          top.
+        </div>
+      </div>
+    </section>
+
+    <!-- 11. Close -->
+    <section class="slide dark">
+      <span class="n">11</span>
+      <span class="tag">How this works</span>
+      <h2>You own the client.<br />We run everything behind it.</h2>
+      <div class="duo">
+        <div>
+          <h3>First Step Digital Agency</h3>
+          <p class="dim">
+            Finds the client, sets the price, sends the bill, and collects their list of
+            services and opening hours.
+          </p>
+        </div>
+        <div>
+          <h3>Logic Loving Mind</h3>
+          <p class="dim">
+            Sets up the number, runs the platform, and keeps it safe, backed up and online.
+            We never contact your clients.
+          </p>
+        </div>
+      </div>
+      <p class="big" style="margin-top: 40px">
+        Send us one client's price list. We will have the assistant answering as them, on a
+        real number, in about ten minutes.
+      </p>
+      <div class="foot">
+        <img src="logo-gradient.svg" alt="" />
+        <span>
+          Logic Loving Mind &nbsp;·&nbsp;
+          <a href="mailto:hey@logiclovingmind.com">hey@logiclovingmind.com</a>
+        </span>
+      </div>
+    </section>
+  </body>
+</html>

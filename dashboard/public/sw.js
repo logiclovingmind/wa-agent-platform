@@ -37,6 +37,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // The partner brief is a static page that happens to share this origin. Through the
+  // navigate branch below it would be stored as the cached "/" shell, and the next
+  // offline launch of the installed dashboard would open a sales page.
+  if (url.pathname.startsWith("/portfolio")) return;
+
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)

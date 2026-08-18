@@ -670,12 +670,13 @@ function replyText(seconds: number | null): string {
 
 /** The numbers again, in the sentence the owner would say to someone else. */
 function sentence(day: DayStats): string {
+  const minutes = day.replySeconds === null ? 0 : Math.round(day.replySeconds / 60);
   const speed =
     day.replySeconds === null
       ? "The assistant answered every enquiry"
       : day.replySeconds < 60
         ? `A typical reply took ${Math.round(day.replySeconds)} seconds`
-        : `A typical reply took ${Math.round(day.replySeconds / 60)} minutes`;
+        : `A typical reply took ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 
   if (day.afterHours === 0) return `${speed}, all of it inside your opening hours.`;
   return `${speed}, and ${day.afterHours} ${
