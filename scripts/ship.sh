@@ -127,6 +127,11 @@ check_anon demo_roll_diary '{}'
 check_anon free_slots "{\"p_org_id\":\"$NIL\"}"
 check_anon book_appointment "{\"p_org_id\":\"$NIL\",\"p_conversation_id\":null,\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
 check_anon reschedule_appointment "{\"p_org_id\":\"$NIL\",\"p_id\":\"$NIL\",\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
+check_anon book_manual "{\"p_org_id\":\"$NIL\",\"p_starts_at\":\"2030-01-01T00:00:00Z\"}"
+# The lead a person types. Granted to `authenticated` and confined by RLS from there, so
+# like free_slots this asserts only the anon half — but it is the half that writes, and
+# `leads` is the one table in here a competitor would actually want.
+check_anon edit_lead "{\"p_conversation_id\":\"$NIL\"}"
 
 if [[ "$FAILED" == true ]]; then
   echo "anon can reach a function it should not. Fix before telling anyone this shipped." >&2

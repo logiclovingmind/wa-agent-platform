@@ -77,6 +77,28 @@ export async function leadsFor(conversationIds: string[]): Promise<Map<string, L
   return found;
 }
 
+/** The five fields a person may write, which are the five the model writes. */
+export type LeadEdit = Pick<Lead, "name" | "intent" | "timeframe" | "budget" | "notes">;
+
+/**
+ * What somebody who actually spoke to the customer knows.
+ *
+ * Straight to Supabase like `followed_up_at`, because it touches neither Meta nor money.
+ * `edit_lead` replaces rather than merges — see migration 0044: emptying a field is the
+ * correction being made, not an omission to be coalesced away.
+ */
+export async function saveLead(conversationId: string, edit: LeadEdit): Promise<void> {
+  const { error } = await supabase.rpc("edit_lead", {
+    p_conversation_id: conversationId,
+    p_name: edit.name,
+    p_intent: edit.intent,
+    p_timeframe: edit.timeframe,
+    p_budget: edit.budget,
+    p_notes: edit.notes,
+  });
+  if (error) throw new Error(error.message);
+}
+
 /**
  * `rows: 0` is a real answer and not a failure — the same distinction the inbox draws
  * between a read that broke and an inbox that is genuinely empty. Collapsing the two

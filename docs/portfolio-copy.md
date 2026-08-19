@@ -34,7 +34,7 @@ appointment, and it knows when to fetch a real person.
 | Icon | Figure | Caption |
 |---|---|---|
 | bubble with a bolt | 85% | of replies went out without anyone lifting a finger |
-| crescent | 500 | questions answered after the business had closed |
+| crescent | 422 | questions answered after the business had closed |
 | clock | 7s | is how long a customer waited for a real answer |
 
 Below the figures, a single bar split at 85%: **Answered by itself** on the left,

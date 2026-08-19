@@ -17,6 +17,7 @@ import {
   takeover,
   type ConversationExport,
 } from "./lib/api";
+import { saveLead, type LeadEdit } from "./lib/leads";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { cn, ist, istDay, istTime, istToday, shiftDay, useNow, windowLeft } from "./lib/utils";
@@ -48,6 +49,7 @@ function downloadJson(filename: string, payload: ConversationExport): void {
 }
 
 export default function Thread({
+  orgId,
   conversation,
   flags,
   lead,
@@ -55,6 +57,9 @@ export default function Thread({
   onBack,
   onChanged,
 }: {
+  /** Only the two writes that name a slot need it — `day_slots` and `book_manual` both
+      take an org id and let RLS decide whether it was the caller's to name. */
+  orgId: string;
   conversation: Conversation;
   flags: SafetyFlag[];
   lead: Lead | null;
@@ -82,6 +87,10 @@ export default function Thread({
   // Everything that is not "call this person" lives behind one button. The header used
   // to carry four, which made the destructive one look like the others.
   const [menuOpen, setMenuOpen] = useState(false);
+  /** Which form the lead panel is showing. One at a time: they are two answers to the
+      same question — what do we now know about this customer — and both open at once put
+      a date picker directly under a name field they have nothing to do with. */
+  const [panel, setPanel] = useState<"edit" | "book" | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
 
@@ -104,6 +113,9 @@ export default function Thread({
     setExported(null);
     setExportRaw(false);
     setMenuOpen(false);
+    // A half-typed lead belongs to the customer it was typed about, and a booking form
+    // left open would take the next customer's slot in this one's name.
+    setPanel(null);
   }, [id]);
 
   useEffect(() => {
@@ -486,26 +498,70 @@ export default function Thread({
       {/* Collapsed by default. It is the same facts as the header subtitle, spelled out —
           worth one click when you need it, not worth a permanent panel between the name
           and the conversation. */}
-      {lead && (
-        <details className="border-b border-border px-4 py-2.5 text-[13px]">
-          <summary className="cursor-pointer list-none text-muted-foreground marker:content-none">
-            <span className="mr-1 inline-block text-[10px]">▸</span>
-            {subtitle || "What they told the assistant"}
-          </summary>
-          <dl className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-            <Learned label="Name given" value={lead.name} />
-            <Learned label="Wants" value={lead.intent} />
-            <Learned label="When" value={lead.timeframe} />
-            <Learned label="Budget" value={lead.budget} />
-            <Learned label="Notes" value={lead.notes} />
-          </dl>
-          <p className="mt-3 text-muted-foreground">
-            {conversation.followed_up_at
-              ? `Called back ${ist(conversation.followed_up_at)}.`
-              : "Nobody has marked this one called back."}
-          </p>
-        </details>
-      )}
+      {/* Shown now even when the assistant learned nothing, which is the change that makes
+          it a card rather than a readout: a conversation with an empty lead is exactly the
+          one somebody takes on the phone, and this is where they write down what was said.
+          It used to render only when a lead already existed, so the customers nobody knew
+          anything about were the customers there was nowhere to record. */}
+      <details className="border-b border-border px-4 py-2.5 text-[13px]">
+        <summary className="cursor-pointer list-none text-muted-foreground marker:content-none">
+          <span className="mr-1 inline-block text-[10px]">▸</span>
+          {subtitle || (lead ? "What they told the assistant" : "Nothing written down yet")}
+        </summary>
+
+        {panel === "edit" ? (
+          // Keyed on the lead so a save landing from the Worker's own `record_lead` while
+          // this is open does not leave the boxes showing what they said ten minutes ago.
+          <LeadForm
+            key={lead?.updated_at ?? "new"}
+            conversationId={id}
+            lead={lead}
+            onClose={() => setPanel(null)}
+            onSaved={onChanged}
+          />
+        ) : (
+          <>
+            <dl className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+              <Learned label="Name given" value={lead?.name} />
+              <Learned label="Wants" value={lead?.intent} />
+              <Learned label="When" value={lead?.timeframe} />
+              <Learned label="Budget" value={lead?.budget} />
+              <Learned label="Notes" value={lead?.notes} />
+            </dl>
+            <p className="mt-3 text-muted-foreground">
+              {conversation.followed_up_at
+                ? `Called back ${ist(conversation.followed_up_at)}.`
+                : "Nobody has marked this one called back."}
+            </p>
+          </>
+        )}
+
+        {panel !== "edit" && (
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <button className="text-blue-600" onClick={() => setPanel("edit")}>
+              {lead ? "Edit" : "Write down what they want"}
+            </button>
+            <button
+              className="text-blue-600"
+              onClick={() => setPanel((p) => (p === "book" ? null : "book"))}
+            >
+              {panel === "book" ? "Never mind" : "Book an appointment"}
+            </button>
+          </div>
+        )}
+
+        {panel === "book" && (
+          <BookFromThread
+            orgId={orgId}
+            conversationId={id}
+            // What to put in the diary's name column, best first: what they called
+            // themselves, then the WhatsApp profile name.
+            name={lead?.name ?? conversation.customer_name ?? ""}
+            service={lead?.intent ?? ""}
+            onBooked={onChanged}
+          />
+        )}
+      </details>
 
       {/* The scroller is full width so the scrollbar sits at the window edge, but the
           reading measure is capped. On a wide desktop an uncapped thread stretches a
@@ -661,6 +717,267 @@ function MenuItem({
     >
       {children}
     </button>
+  );
+}
+
+const FIELD =
+  "min-w-0 w-full rounded-md border border-border bg-transparent px-2 py-1 text-[13px]";
+const GO =
+  "shrink-0 rounded-md bg-foreground px-2.5 py-1 text-[13px] font-medium text-background disabled:opacity-50";
+
+/** The four one-line fields, in the order the panel above reads them out. */
+const LEAD_FIELDS: Array<{ key: keyof LeadEdit; label: string; hint: string }> = [
+  { key: "name", label: "Name given", hint: "What they call themselves" },
+  { key: "intent", label: "Wants", hint: "Bridal package, 2BHK in Whitefield" },
+  { key: "timeframe", label: "When", hint: "Next Saturday" },
+  { key: "budget", label: "Budget", hint: "₹18,000" },
+];
+
+/**
+ * The enquiry, as typed by somebody who spoke to the customer.
+ *
+ * Whoever writes last wins, deliberately — `edit_lead` replaces where `record_lead`
+ * merges. The model is guessing from ten turns of chat; the person filling this in has
+ * just put the phone down, and emptying a box is the correction they came here to make.
+ */
+function LeadForm({
+  conversationId,
+  lead,
+  onClose,
+  onSaved,
+}: {
+  conversationId: string;
+  /** Null for a conversation the assistant never learned anything from. */
+  lead: Lead | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState<Record<keyof LeadEdit, string>>({
+    name: lead?.name ?? "",
+    intent: lead?.intent ?? "",
+    timeframe: lead?.timeframe ?? "",
+    budget: lead?.budget ?? "",
+    notes: lead?.notes ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await saveLead(conversationId, draft);
+      onSaved();
+      onClose();
+    } catch (e) {
+      // Left open on failure. Closing the form would take the typing with it, and the
+      // person would have to remember what they had written to try again.
+      setError(e instanceof Error ? e.message : "could not save it");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        {LEAD_FIELDS.map(({ key, label, hint }) => (
+          <label key={key} className="flex items-baseline gap-2">
+            <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+            <input
+              value={draft[key]}
+              placeholder={hint}
+              onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+              className={FIELD}
+            />
+          </label>
+        ))}
+      </div>
+
+      <label className="flex items-baseline gap-2">
+        <span className="w-20 shrink-0 text-muted-foreground">Notes</span>
+        <textarea
+          rows={2}
+          value={draft.notes}
+          placeholder="Anything the next person picking this up needs to know"
+          onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+          className={cn(FIELD, "resize-none")}
+        />
+      </label>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" disabled={busy} onClick={() => void submit()} className={GO}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={onClose} className="text-muted-foreground">
+          Cancel
+        </button>
+        <span className="min-w-0 flex-1 text-muted-foreground">
+          {/* The empty box is the point, so it is stated: everywhere else in this product
+              an empty field means "not known yet", and here it means "delete that". */}
+          Replaces what the assistant wrote down, including with a blank. This is what the
+          enquiries export contains.
+        </span>
+      </div>
+
+      {error && <p className="text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Putting the customer you are reading into the diary.
+ *
+ * The same `book_manual` the Diary's own form calls, with the conversation attached —
+ * which is the difference that matters later. A booking that carries its thread goes back
+ * on the desk with a number to ring if it is marked a no-show; one that does not is
+ * rescheduled in the diary or forgotten. It is still a manual booking and counted as one:
+ * the assistant did not agree this time, a person did.
+ *
+ * Times come from `day_slots` and never a text box, for the reason spelled out in
+ * migration 0034 — an off-grid 09:15 leaves 09:00 and 09:30 both bookable and the
+ * assistant will put somebody on top of this customer.
+ */
+function BookFromThread({
+  orgId,
+  conversationId,
+  name,
+  service,
+  onBooked,
+}: {
+  orgId: string;
+  conversationId: string;
+  name: string;
+  service: string;
+  onBooked: () => void;
+}) {
+  const [day, setDay] = useState(istToday());
+  const [slots, setSlots] = useState<{ starts_at: string }[] | null>(null);
+  const [at, setAt] = useState("");
+  const [who, setWho] = useState(name);
+  const [what, setWhat] = useState(service);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lost, setLost] = useState(false);
+  /** The instant that was taken, held so the confirmation can name it. */
+  const [booked, setBooked] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setSlots(null);
+    setAt("");
+    setLost(false);
+    void supabase
+      .rpc("day_slots", { p_org_id: orgId, p_day: day })
+      .then(({ data }) => live && setSlots((data as { starts_at: string }[] | null) ?? []));
+    return () => {
+      live = false;
+    };
+  }, [orgId, day]);
+
+  const chosen = at || slots?.[0]?.starts_at || "";
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    const { data, error: writeError } = await supabase.rpc("book_manual", {
+      p_org_id: orgId,
+      p_starts_at: chosen,
+      p_name: who.trim() || null,
+      p_service: what.trim() || null,
+      p_conversation_id: conversationId,
+    });
+    setBusy(false);
+    if (writeError) return setError(writeError.message);
+    // Null is "somebody was quicker", which is not an error and must not read as one —
+    // but it does mean this customer has no appointment, and nobody may leave believing
+    // otherwise.
+    if (data === null) return setLost(true);
+    setBooked(chosen);
+    onBooked();
+  }
+
+  if (booked) {
+    return (
+      <div className="mt-3 space-y-1">
+        <p className="font-medium">
+          Booked for {dayLabel(booked).toLowerCase()} at {istTime(booked)}.
+        </p>
+        <p className="text-muted-foreground">
+          It is in the diary and the assistant will not offer that time again. Nobody has
+          been told — send them a message.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="date"
+          aria-label="Date"
+          value={day}
+          onChange={(e) => e.target.value && setDay(e.target.value)}
+          className={cn(FIELD, "w-auto")}
+        />
+        {slots === null ? (
+          <span className="text-muted-foreground">Loading…</span>
+        ) : slots.length === 0 ? (
+          <span className="text-muted-foreground">
+            Nothing free that day — booked, blocked, or you are closed.
+          </span>
+        ) : (
+          <select
+            aria-label="Time"
+            value={chosen}
+            onChange={(e) => {
+              setAt(e.target.value);
+              setLost(false);
+            }}
+            className={cn(FIELD, "w-auto")}
+          >
+            {slots.map((s) => (
+              <option key={s.starts_at} value={s.starts_at}>
+                {istTime(s.starts_at)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {slots !== null && slots.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={who}
+            onChange={(e) => setWho(e.target.value)}
+            placeholder="Name"
+            className={cn(FIELD, "w-auto flex-1")}
+          />
+          <input
+            value={what}
+            onChange={(e) => setWhat(e.target.value)}
+            placeholder="What for (optional)"
+            className={cn(FIELD, "w-auto flex-1")}
+          />
+          <button type="button" disabled={busy} onClick={() => void submit()} className={GO}>
+            Book
+          </button>
+        </div>
+      )}
+
+      {error ? (
+        <p className="text-destructive">{error}</p>
+      ) : lost ? (
+        <p className="text-destructive">
+          That time went while you were typing. Nothing was booked — pick another.
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          Goes straight into the diary against this conversation. The customer is not
+          messaged, and this does not count as an appointment the assistant took.
+        </p>
+      )}
+    </div>
   );
 }
 

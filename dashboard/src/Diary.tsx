@@ -23,7 +23,7 @@ import { cn, dayOfWeek, istDay, istTime, istToday, shiftDay } from "./lib/utils"
 
 /** Named columns, never `select *` — invariant 7's rule, applied past `messages`. */
 const BOOKING_COLUMNS =
-  "id,starts_at,duration_minutes,customer_name,service,status,kind,conversation_id";
+  "id,starts_at,duration_minutes,customer_name,service,status,kind,conversation_id,source";
 
 /**
  * A month of a busy salon is a few hundred rows. The cap is here so that a runaway org
@@ -46,8 +46,12 @@ export interface Booking {
   status: string;
   /** `block` is time the owner marked unavailable, not a customer. */
   kind: string;
-  /** Set only when the booking came from WhatsApp — the thread it was agreed in. */
+  /** The thread this belongs to, whoever agreed it. Set by the assistant when it takes a
+      booking, and by a person booking from the desk — so it is the link back to the
+      customer, and no longer the answer to who booked them. */
   conversation_id: string | null;
+  /** "assistant" | "person". The answer to who booked them (migration 0044). */
+  source: string;
 }
 
 /** One bookable slot on the open day, as `public.day_slots` returns it. */
@@ -428,7 +432,10 @@ export default function Diary({ orgId, isOwner }: { orgId: string; isOwner: bool
   const closedOnDay = hours !== null && !openDays.has(dayOfWeek(day));
 
   const real = (bookings ?? []).filter((b) => b.kind !== "block");
-  const auto = real.filter((b) => b.conversation_id !== null).length;
+  // Read off the row, not inferred from the thread. Booking somebody from the desk sets
+  // `conversation_id` too, and counting that as the assistant's work would inflate this
+  // number every time a person did the job themselves.
+  const auto = real.filter((b) => b.source === "assistant").length;
   // Not "this week": the span moves with Back and Next, and a heading that keeps saying
   // "this week" over next month's rows is the kind of wrong nobody notices.
   const span = `in ${monthLabel(monthOf(anchor))}`;
@@ -767,7 +774,9 @@ function BookingRow({
       {onCancel && active && (
         <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
           <span className="tabular-nums">{b.duration_minutes} min</span>
-          {b.conversation_id && !block && <span>booked on WhatsApp</span>}
+          {!block && b.conversation_id && (
+            <span>{b.source === "assistant" ? "booked on WhatsApp" : "entered from the thread"}</span>
+          )}
           {/* Marking the no-show is what puts them back on the desk, so the row says so
               rather than offering a second button that would do it again. */}
           {b.status === "no_show" && b.conversation_id && <span>on the desk to call back</span>}

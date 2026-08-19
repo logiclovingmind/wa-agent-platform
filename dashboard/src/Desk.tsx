@@ -573,6 +573,7 @@ export default function Desk({
 
       {open ? (
         <Thread
+          orgId={orgId}
           conversation={open}
           flags={flags.get(open.id) ?? []}
           lead={leads.get(open.id) ?? null}
