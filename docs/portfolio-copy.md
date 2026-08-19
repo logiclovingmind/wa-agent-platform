@@ -124,13 +124,25 @@ Full screenshot of one seeded conversation run end to end, no caption.
 
 **Headline:** Diary. *It books, they turn up.*
 
-- **Booked by the assistant** — On a day anyone at the desk can read.
-- **Block, move, tick off** — The front desk still runs the day.
-- **A no-show comes back** — As a job to chase, not as a gap.
+Full screenshot of the whole tab, month grid and day pane, no caption.
 
 ---
 
-## 10 — Flowin
+## 10 — Diary, running the day
+
+**Label:** Screen two, running the day
+
+**Headline:** The front desk still runs the diary.
+
+- **Add a booking** — Only times that are genuinely free are offered.
+- **Came, or did not** — Tick the day off as people walk in.
+- **Move, cancel, rebook** — A no-show comes back as a job to chase.
+- **Block out time** — Training, a holiday, a closed afternoon.
+- **Set the opening hours** — So it can never offer an hour you are shut.
+
+---
+
+## 11 — Flowin
 
 **Label:** Screen three
 
@@ -141,7 +153,7 @@ without asking anybody for a report.
 
 ---
 
-## 11 — Why
+## 12 — Why
 
 **Label:** Next to everything else on the market
 
@@ -158,7 +170,7 @@ without asking anybody for a report.
 
 ---
 
-## 12 — Safety
+## 13 — Safety
 
 **Label:** The part nobody else will show you
 
@@ -171,7 +183,7 @@ without asking anybody for a report.
 
 ---
 
-## 13 — Close
+## 14 — Close
 
 **Label:** Seeing it for yourself
 

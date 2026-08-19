@@ -51,12 +51,24 @@ jobs:
       - name: Apply migrations
         run: pnpm db:migrate --remote
 
+      # The runner image already ships a psql, and the two steps below only feed it a
+      # file — no pg_dump, so the client major does not have to match the server. That
+      # matters because adding the PGDG apt repo wedged for ten minutes on 2026-08-19 and
+      # took the whole job with it *after* the migrations had already applied, which left
+      # live half seeded. So: use what is there, fall back to apt only if there is
+      # genuinely no psql, and time-box the step well under the job's own ten minutes so
+      # a wedged apt fails here instead of eating the run.
       - name: Install psql
         if: ${{ inputs.seed_demo || inputs.provision_accounts }}
+        timeout-minutes: 4
         run: |
           set -euo pipefail
+          if command -v psql > /dev/null; then
+            psql --version
+            exit 0
+          fi
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+            | sudo gpg --batch --yes --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
           echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq

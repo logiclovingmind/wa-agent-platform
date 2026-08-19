@@ -504,6 +504,15 @@
           <path d="M12 3.5 L15 6.5 V9 L12 12 L9 9 V6.5 Z" />
           <path d="M4 20.5 V18 L8 14 H16 L20 18 V20.5" />
         </symbol>
+        <!-- Ticked off. Both legs on the diagonal, like everything else here. -->
+        <symbol id="i-tick" viewBox="0 0 24 24">
+          <path d="M4 12.5 L9.5 18 L20 7.5" />
+        </symbol>
+        <!-- An hour held back, so nothing can be booked into it. -->
+        <symbol id="i-block" viewBox="0 0 24 24">
+          <path d="M4 5 H20 V19 H4 Z" />
+          <path d="M7 16 L15 8" />
+        </symbol>
         <!-- Opening hours, handed over. -->
         <symbol id="i-hours" viewBox="0 0 24 24">
           <path d="M3.5 4 H20.5 V20 H3.5 Z" />
@@ -687,28 +696,44 @@
       <span class="n">09</span>
       <span class="tag">Screen two</span>
       <h2>Diary. <span class="soft">It books, they turn up.</span></h2>
+      <img class="shot" src="shots/diary.png" alt="The Diary screen" />
+    </section>
+
+    <!-- 10. Diary, the day -->
+    <section class="slide">
+      <span class="n">10</span>
+      <span class="tag">Screen two, running the day</span>
+      <h2>The front desk still<br />runs the diary.</h2>
       <div class="zoom">
         <img class="crop" src="shots/diary-today.png" alt="Today's bookings" />
         <div class="opts">
           <div class="opt">
-            <svg class="ico"><use href="#i-calendar" /></svg>
-            <div><b>Booked by the assistant</b><span>On a day anyone at the desk can read.</span></div>
+            <svg class="ico sm"><use href="#i-calendar" /></svg>
+            <div><b>Add a booking</b><span>Only times that are genuinely free are offered.</span></div>
           </div>
           <div class="opt">
-            <svg class="ico"><use href="#i-pause" /></svg>
-            <div><b>Block, move, tick off</b><span>The front desk still runs the day.</span></div>
+            <svg class="ico sm"><use href="#i-tick" /></svg>
+            <div><b>Came, or did not</b><span>Tick the day off as people walk in.</span></div>
           </div>
           <div class="opt">
-            <svg class="ico"><use href="#i-swap" /></svg>
-            <div><b>A no-show comes back</b><span>As a job to chase, not as a gap.</span></div>
+            <svg class="ico sm"><use href="#i-swap" /></svg>
+            <div><b>Move, cancel, rebook</b><span>A no-show comes back as a job to chase.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-block" /></svg>
+            <div><b>Block out time</b><span>Training, a holiday, a closed afternoon.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-hours" /></svg>
+            <div><b>Set the opening hours</b><span>So it can never offer an hour you are shut.</span></div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 10. Flowin -->
+    <!-- 11. Flowin -->
     <section class="slide">
-      <span class="n">10</span>
+      <span class="n">11</span>
       <span class="tag">Screen three</span>
       <h2>Flowin. <span class="soft">Proof it was worth it.</span></h2>
       <div class="stack">
@@ -721,9 +746,9 @@
       </div>
     </section>
 
-    <!-- 11. Why -->
+    <!-- 12. Why -->
     <section class="slide">
-      <span class="n">11</span>
+      <span class="n">12</span>
       <span class="tag">Next to everything else on the market</span>
       <h2>Four things that<br />make the difference.</h2>
       <div class="claims">
@@ -750,9 +775,9 @@
       </div>
     </section>
 
-    <!-- 12. Safety -->
+    <!-- 13. Safety -->
     <section class="slide dark">
-      <span class="n">12</span>
+      <span class="n">13</span>
       <span class="tag">The part nobody else will show you</span>
       <h2>When it should not<br />answer, it does not.</h2>
       <div class="duo">
@@ -775,9 +800,9 @@
       </div>
     </section>
 
-    <!-- 13. Close -->
+    <!-- 14. Close -->
     <section class="slide dark">
-      <span class="n">13</span>
+      <span class="n">14</span>
       <span class="tag">Seeing it for yourself</span>
       <h2>Send us two things.</h2>
       <div class="duo" style="margin-top: 34px">
