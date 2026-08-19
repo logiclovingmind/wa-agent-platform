@@ -315,7 +315,7 @@ export default function Thread({
                     setMenuOpen(false);
                   }}
                 >
-                  +{conversation.customer_wa_id} — copy
+                  Copy +{conversation.customer_wa_id}
                 </MenuItem>
 
                 {/* Owner-only here because they are owner-only at the Worker; staff would
@@ -357,7 +357,7 @@ export default function Thread({
         <div className="border-b border-border bg-muted/40 px-4 py-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="mr-auto text-xs uppercase tracking-wide text-muted-foreground">
-              Everything held about this customer — {exported.messages.length}{" "}
+              Everything held about this customer: {exported.messages.length}{" "}
               {exported.messages.length === 1 ? "message" : "messages"}, taken{" "}
               {ist(exported.exported_at)}
             </span>
@@ -414,7 +414,7 @@ export default function Thread({
                     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
                       {m.body || (
                         <span className="text-muted-foreground/70">
-                          {m.media_key ? `${m.type} — ${m.media_key}` : m.type}
+                          {m.media_key ? `${m.type}, ${m.media_key}` : m.type}
                         </span>
                       )}
                     </span>
@@ -559,7 +559,7 @@ export default function Thread({
                           outbound attachment is something we sent. */}
                       {inbound && !m.safety_screened && (
                         <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-amber-600">
-                          Not screened — read it yourself
+                          Not screened, read it yourself
                         </div>
                       )}
                     </div>
@@ -604,7 +604,7 @@ export default function Thread({
                 }
               }}
               placeholder={
-                left?.closed ? "Window closed — needs a template" : `Message ${firstName || "them"}`
+                left?.closed ? "Window closed, this needs a template" : `Message ${firstName || "them"}`
               }
               className="min-h-10 resize-none rounded-xl bg-background"
             />

@@ -29,6 +29,14 @@ const CHROME =
   process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9333;
 
+// A conversation row is a button whose first line is the customer's name, so opening a
+// thread is the same click as switching screens. Harini Balaji is the one seeded
+// conversation that runs start to finish — 24 turns, ending on a held seat — which is the
+// only one worth photographing as a chat.
+const OPEN_THREAD = `[...document.querySelectorAll("button")]
+  .find((b) => b.textContent.trim().startsWith("Harini Balaji"))?.click() ?? true`;
+const OPEN_MENU = `document.querySelector('button[aria-label="More"]')?.click() ?? true`;
+
 const PASSES = [
   {
     email: process.env.DEMO_EMAIL ?? "owner@demo.com",
@@ -40,18 +48,47 @@ const PASSES = [
       ["Flowin", "flowin"],
       ["Flowin", "flowin-headline", { x: 240, y: 130, width: 740, height: 260 }],
       ["Desk", "desk"],
-      // Ends just under the Distress badge. Any taller and the next conversation is
-      // sliced in half, which reads as a broken image rather than a crop.
-      ["Desk", "desk-flags", { x: 238, y: 212, width: 324, height: 232 }],
-      // x starts inside the third column, y below the divider above it. Either edge left
-      // looser picks up a stray rule or a strip of the neighbouring column, and a crop
-      // that carries half of something else reads as a mistake.
-      ["Desk", "desk-pause", { x: 590, y: 510, width: 655, height: 164 }],
+      // 13px of air around the "Waiting on you" label (top 237) and the Distress badge
+      // (bottom 431). Any taller and the next conversation is sliced in half, which reads
+      // as a broken image rather than a crop; x clears the column rule at 241.
+      ["Desk", "desk-flags", { x: 245, y: 224, width: 315, height: 220 }],
+      // 20px of air around the block itself: heading top 558, button bottom 682, text
+      // 617 to 1209. Starting any higher catches the divider rule above, and the old
+      // bottom edge sliced 8px off the button, which reads as a broken image.
+      ["Desk", "desk-pause", { x: 597, y: 538, width: 632, height: 164 }],
+      // The chat itself. Taken after the three Desk shots above, because opening a
+      // conversation replaces the right-hand panel they are cropped out of.
+      ["Desk", "thread", null, OPEN_THREAD, `/Four seats are open/.test(document.body.innerText)`],
+      // The conversation header and the open menu together, which is every control there
+      // is on a chat. Generously bounded rather than measured: the menu's height depends
+      // on which items the signed-in role may see, and a crop that fits the owner exactly
+      // would slice the last item off for staff.
+      [
+        "Desk",
+        "thread-options",
+        { x: 580, y: 0, width: 700, height: 330 },
+        OPEN_MENU,
+        `/Erase permanently/.test(document.body.innerText)`,
+      ],
       ["Diary", "diary"],
       ["Diary", "diary-today", { x: 590, y: 56, width: 655, height: 292 }],
     ],
   },
 ];
+
+// None of these screens has a loading flag: before the first Supabase read returns they
+// render a complete, and completely stable, zeroed empty state. So the wait cannot key off
+// the text settling — it has to name something only real data can produce.
+//
+// Every one of these must be a *positive* assertion. "The empty-state sentence is absent"
+// is also true of a panel that has not mounted yet, so a negative test passes instantly on
+// the screen before this one and the shot is taken while the RPCs are still in flight.
+// That is exactly how an empty Flowin got into the brief twice.
+const READY = {
+  Flowin: `/replies went out without anyone/.test(document.body.innerText)`,
+  Desk: `/\\d[\\d,]*\\s*enquiries answered/.test(document.body.innerText)`,
+  Diary: `/\\d+\\s*booked/.test(document.body.innerText)`,
+};
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -178,14 +215,23 @@ async function run(pass, cdp) {
   }
 
   let current = null;
-  for (const [label, name, clip] of pass.shots) {
+  for (const [label, name, clip, before, ready] of pass.shots) {
     if (label !== current) {
       if (!(await evaluate(cdp, clickButton(label)))) {
         console.log(`  skipped ${name}: no "${label}" button on this account`);
         continue;
       }
-      await sleep(2500); // Realtime and the first Supabase read.
+      if (READY[label]) await waitFor(cdp, READY[label], `${label} to load its data`);
+      await sleep(600); // The number counts up and the chart draws.
       current = label;
+    }
+    if (before) {
+      await evaluate(cdp, before);
+      // Same rule as READY above: name something only the loaded state can produce. A
+      // thread renders its header before its messages, so waiting on the name would
+      // photograph an empty chat.
+      if (ready) await waitFor(cdp, ready, `${name} to be ready`);
+      await sleep(400);
     }
     const { data } = await cdp.send("Page.captureScreenshot", {
       format: "png",

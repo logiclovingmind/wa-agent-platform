@@ -110,18 +110,18 @@ from conversations c
 join (values
   ('919990010001', 1, 'inbound',  'Is the Saturday batch still open?',                     'text',  false, true,  null,   interval '8 minutes'),
   ('919990010001', 2, 'outbound', 'Yes, a few seats are left. Shall I hold one for you?',  'text',  false, true,  'read', interval '6 minutes'),
-  ('919990010002', 1, 'inbound',  'Sorry, I got busy — can we talk tomorrow?',             'text',  false, true,  null,   interval '2 hours'),
+  ('919990010002', 1, 'inbound',  'Sorry, I got busy, can we talk tomorrow?',             'text',  false, true,  null,   interval '2 hours'),
   -- The one send Meta refused. Nothing else on the admin screen can show this: the reply
   -- exists, the conversation looks answered, and the customer received nothing.
-  ('919990010002', 2, 'outbound', 'No problem at all — shall I check back with you tomorrow morning?', 'text', false, true, 'failed', interval '119 minutes'),
+  ('919990010002', 2, 'outbound', 'No problem at all. Shall I check back with you tomorrow morning?', 'text', false, true, 'failed', interval '119 minutes'),
   ('919990010003', 1, 'inbound',  'I would rather speak to someone, please.',              'text',  false, true,  null,   interval '4 minutes'),
-  ('919990010003', 2, 'outbound', 'Of course — someone from our team will reply shortly.', 'text',  false, true,  'read', interval '3 minutes'),
+  ('919990010003', 2, 'outbound', 'Of course, someone from our team will reply shortly.', 'text',  false, true,  'read', interval '3 minutes'),
   ('919990010004', 1, 'inbound',  'hi i am 14, can i join the coding class?',              'text',  false, true,  null,   interval '2 minutes'),
   ('919990010004', 2, 'outbound', 'I''ll need to speak with a parent or guardian.',        'text',  false, true,  'read', interval '1 minute'),
   -- Screened and clean: the classifier saw it, said nothing, and the turn still went to
   -- a person. Booleans back are never an answer to the customer.
   ('919990010005', 1, 'inbound',  'is this the model you have in stock?',                  'image', true,  true,  null,   interval '6 minutes'),
-  ('919990010005', 2, 'outbound', 'Thanks — I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, true, 'read', interval '5 minutes'),
+  ('919990010005', 2, 'outbound', 'Thanks, I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, true, 'read', interval '5 minutes'),
   -- Never fetched, so never screened either — the badge and the missing bytes are the
   -- same fact told twice.
   ('919990010006', 1, 'inbound',  'the fan is making this noise',                          'video', false, false, null,   interval '10 minutes'),
@@ -129,9 +129,9 @@ join (values
   -- A voice note has no caption at all, so the bubble is the player and nothing else —
   -- and nothing transcribes it, so this is the badge's permanent home.
   ('919990010007', 1, 'inbound',  null,                                                    'audio', true,  false, null,   interval '13 minutes'),
-  ('919990010007', 2, 'outbound', 'Thanks — I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, true, 'read', interval '12 minutes'),
+  ('919990010007', 2, 'outbound', 'Thanks, I''ve passed this on to someone from our team, and they''ll reply here shortly.', 'text', false, true, 'read', interval '12 minutes'),
   ('919990010008', 1, 'inbound',  'Please delete my details from your system.',            'text',  false, true,  null,   interval '31 minutes'),
-  ('919990010008', 2, 'outbound', 'Of course — I''ll pass that on and it will be taken care of.', 'text', false, true, 'read', interval '30 minutes'),
+  ('919990010008', 2, 'outbound', 'Of course, I''ll pass that on and it will be taken care of.', 'text', false, true, 'read', interval '30 minutes'),
   -- No caption, no stored bytes. A flagged conversation has its content dropped within
   -- 24 hours, so this is what the demo looks like the morning after anyway — and it is
   -- the only place the flag can have come from the picture and nothing else.
@@ -146,7 +146,7 @@ join (values
   -- media objects were uploaded to (scripts/demo-media.ts), so seq 1 and 2 cannot move.
   -- Order on screen is by created_at, which these sit before, so the numbers never show.
   ('919990010001', 11, 'inbound',  'Hi, is this the Indiranagar centre?',                   'text', false, true, null,   interval '25 minutes'),
-  ('919990010001', 12, 'outbound', 'It is — 100 Feet Road, above the HDFC branch.',         'text', false, true, 'read', interval '24 minutes'),
+  ('919990010001', 12, 'outbound', 'It is. 100 Feet Road, above the HDFC branch.',         'text', false, true, 'read', interval '24 minutes'),
   ('919990010001', 13, 'inbound',  'I am looking at the weekend data science batch',        'text', false, true, null,   interval '12 minutes'),
   ('919990010001', 14, 'outbound', 'That one runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 'text', false, true, 'read', interval '11 minutes'),
   ('919990010002', 11, 'inbound',  'hello, I filled the form on your website',              'text', false, true, null,   interval '185 minutes'),
@@ -154,25 +154,25 @@ join (values
   ('919990010002', 13, 'inbound',  'data science, the weekend one',                         'text', false, true, null,   interval '150 minutes'),
   ('919990010002', 14, 'outbound', 'The next weekend batch begins on the 6th and four seats are open. Shall I tell you the fees?', 'text', false, true, 'read', interval '149 minutes'),
   ('919990010003', 11, 'inbound',  'is there an instalment option for the fees',            'text', false, true, null,   interval '33 minutes'),
-  ('919990010003', 12, 'outbound', 'There is — the fee can be paid in two instalments, by UPI, card or bank transfer.', 'text', false, true, 'read', interval '32 minutes'),
+  ('919990010003', 12, 'outbound', 'There is. The fee can be paid in two instalments, by UPI, card or bank transfer.', 'text', false, true, 'read', interval '32 minutes'),
   ('919990010003', 13, 'inbound',  'and if I need to change batch later?',                  'text', false, true, null,   interval '20 minutes'),
   ('919990010003', 14, 'outbound', 'A transfer to the next batch is allowed up to the second session.', 'text', false, true, 'read', interval '19 minutes'),
   ('919990010004', 11, 'inbound',  'hi is there a coding class',                            'text', false, true, null,   interval '14 minutes'),
   ('919990010004', 12, 'outbound', 'We teach Python as part of the Data Science course, from the first session.', 'text', false, true, 'read', interval '13 minutes'),
   ('919990010005', 11, 'inbound',  'hi, quick question about what you have available',      'text', false, true, null,   interval '22 minutes'),
-  ('919990010005', 12, 'outbound', 'Of course — what are you looking for?',                 'text', false, true, 'read', interval '21 minutes'),
+  ('919990010005', 12, 'outbound', 'Of course. What are you looking for?',                 'text', false, true, 'read', interval '21 minutes'),
   ('919990010006', 11, 'inbound',  'hi, I need help with something at home',                'text', false, true, null,   interval '24 minutes'),
-  ('919990010006', 12, 'outbound', 'Happy to help — what seems to be the trouble?',         'text', false, true, 'read', interval '23 minutes'),
+  ('919990010006', 12, 'outbound', 'Happy to help. What seems to be the trouble?',         'text', false, true, 'read', interval '23 minutes'),
   ('919990010007', 11, 'inbound',  'hi, can I send a voice note? typing is hard right now', 'text', false, true, null,   interval '20 minutes'),
   ('919990010007', 12, 'outbound', 'Please go ahead.',                                      'text', false, true, 'read', interval '19 minutes'),
   ('919990010008', 11, 'inbound',  'hi, I enquired last year about the evening batch',      'text', false, true, null,   interval '60 minutes'),
   ('919990010008', 12, 'outbound', 'I can see an enquiry from this number. Would you like the current timings?', 'text', false, true, 'read', interval '59 minutes'),
   ('919990010008', 13, 'inbound',  'no, I am not interested any more',                      'text', false, true, null,   interval '40 minutes'),
-  ('919990010008', 14, 'outbound', 'Understood — I won''t follow up.',                      'text', false, true, 'read', interval '39 minutes'),
+  ('919990010008', 14, 'outbound', 'Understood, I won''t follow up.',                      'text', false, true, 'read', interval '39 minutes'),
   -- Deliberately nothing a text prefilter could catch. The flag on this conversation has
   -- to have come from the picture alone, or the demo below it proves nothing.
   ('919990010009', 11, 'inbound',  'hi, are you open today?',                               'text', false, true, null,   interval '20 minutes'),
-  ('919990010009', 12, 'outbound', 'We are — 9:30am to 7pm, Monday to Saturday.',           'text', false, true, 'read', interval '19 minutes')
+  ('919990010009', 12, 'outbound', 'We are. 9:30am to 7pm, Monday to Saturday.',           'text', false, true, 'read', interval '19 minutes')
 ) as m(wa_id, seq, dir, body, type, stored, screened, status, age) on m.wa_id = c.customer_wa_id;
 
 insert into safety_flags (org_id, conversation_id, message_id, kind)
@@ -287,7 +287,7 @@ cross join lateral (
       'What are the fees for the weekend batch?',
       'Is there a centre near Indiranagar?',
       'Can I pay in instalments?',
-      'My daughter finished her degree last year — is she eligible?',
+      'My daughter finished her degree last year, is she eligible?',
       'Do you give a certificate at the end?',
       'What time does the Saturday batch start?',
       'Are the classes online or in person?',
@@ -303,36 +303,36 @@ cross join lateral (
       'What do I need to bring to enrol?',
       'Is attendance compulsory?',
       'How far is the centre from Domlur?',
-      'My son is in first year BCom — can he join?',
+      'My son is in first year BCom, can he join?',
       'Do you take classes on public holidays?',
       'What is the fee for Spoken English?',
       'Can I speak to someone before I decide?'
     ])[1 + (right(c.customer_wa_id, 4)::int % 24)] as ask,
     (array[
-      'Yes — a twelve-week data science track, weekday evenings or weekend mornings. Which would suit you better?',
+      'Yes, a twelve-week data science track, weekday evenings or weekend mornings. Which would suit you better?',
       'The weekend batch is ₹4,500 for eight sessions, material included. Shall I send you the schedule?',
       'Yes, our Indiranagar centre runs evening batches Monday to Thursday. Would you like the address?',
-      'Yes — two instalments, half at enrolment and half after the fourth session.',
+      'Yes, two instalments, half at enrolment and half after the fourth session.',
       'Yes, graduates are eligible for every track. Would you like me to note her details?',
       'Yes, a completion certificate once the final project is submitted and reviewed.',
       'The Saturday batch runs 10am to 1pm. Would you like me to hold a seat?',
-      'Both — you can switch between the in-person class and the live online session in any week.',
+      'Both. You can switch between the in-person class and the live online session in any week.',
       'Once a batch has begun the fee is not refundable, but you can move to the next batch up to the second session.',
-      'We offer CV review and interview practice. We do not promise a job — that would not be honest of us.',
-      'Yes — let us know a week ahead and we will move you to the weekday batch.',
+      'We offer CV review and interview practice. We do not promise a job, that would not be honest of us.',
+      'Yes, let us know a week ahead and we will move you to the weekday batch.',
       'Batches are capped at twenty, so there is time with the trainer for everyone.',
-      'Yes — eight weeks, weekends 2pm to 5pm, ₹12,000.',
+      'Yes, eight weeks, weekends 2pm to 5pm, ₹12,000.',
       'Yes, you can take the live online session instead of the class in any week.',
-      'Yes — UPI, card and bank transfer are all fine.',
+      'Yes, UPI, card and bank transfer are all fine.',
       'The next weekend batch begins on the 6th, and four seats are open at the moment.',
       'Spoken English runs 8am to 9am on weekdays. Data Science is evenings and weekends only.',
       'One photo ID at the first session, and the first instalment. That is all.',
       'The certificate needs 80% attendance, so most weeks do matter.',
-      'About ten minutes — we are on 100 Feet Road, above the HDFC branch.',
+      'About ten minutes. We are on 100 Feet Road, above the HDFC branch.',
       'Yes, students on any degree are welcome. Shall I send the weekend schedule?',
       'No, and the batch simply runs a week longer when one falls in the middle.',
       '₹6,000 for six weeks, weekday mornings 8am to 9am.',
-      'Of course — someone from our team can call you. What time suits you?'
+      'Of course, someone from our team can call you. What time suits you?'
     ])[1 + (right(c.customer_wa_id, 4)::int % 24)] as answer
 ) qa
 cross join (values (1, 'inbound'), (2, 'outbound')) as m(seq, dir)
@@ -371,17 +371,17 @@ cross join (values
   (1,  'Hi, I saw your ad for the data science course'),
   (2,  'Hello! Happy to help. Is this for yourself, or for someone else?'),
   (3,  'For myself. I work full time though'),
-  (4,  'Understood — most of our working professionals take the weekend batch. Would that suit you?'),
+  (4,  'Understood. Most of our working professionals take the weekend batch. Would that suit you?'),
   (5,  'Yes, weekends work. What is the schedule?'),
   (6,  'Saturdays and Sundays, 10am to 1pm, for twelve weeks.'),
   (7,  'And the fees?'),
   (8,  '₹18,000 for the full twelve weeks, or ₹4,500 per module if you would rather take them one at a time.'),
   (9,  'Is there a discount if I pay early?'),
-  (10, 'There is — 10% off if the full amount is paid before the batch begins.'),
+  (10, 'There is. 10% off if the full amount is paid before the batch begins.'),
   (11, 'What do I need to know before starting?'),
   (12, 'Basic spreadsheets are enough. We cover Python from the first session.'),
   (13, 'I have never coded before. Is that a problem?'),
-  (14, 'Not at all — about half of each batch starts from zero.'),
+  (14, 'Not at all, about half of each batch starts from zero.'),
   (15, 'Where is the centre?'),
   (16, 'Indiranagar, 100 Feet Road, above the HDFC branch. I can send a map link if that helps.'),
   (17, 'Yes please, send it'),
@@ -389,9 +389,9 @@ cross join (values
   (19, 'When does the next batch start?'),
   (20, 'The next weekend batch begins on the 6th. Four seats are open at the moment.'),
   (21, 'Can I sit in before I enrol?'),
-  (22, 'Of course — you are welcome to attend the first session before deciding.'),
+  (22, 'Of course, you are welcome to attend the first session before deciding.'),
   (23, 'Great, please hold a seat for me'),
-  (24, 'Done — a seat is held for you for the batch starting on the 6th. Someone from our team will confirm by tomorrow.')
+  (24, 'Done. A seat is held for you for the batch starting on the 6th. Someone from our team will confirm by tomorrow.')
 ) as t(seq, body)
 where c.customer_wa_id = '919990030001';
 
@@ -469,21 +469,21 @@ from (
   join (values
   -- Fees, then the price objection, then how to pay it. The most common thread there is.
   ('919990040001', 1, 'inbound',  'Hi, do you have any weekend classes?', 47),
-  ('919990040001', 2, 'outbound', 'We do — Data Science runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 46),
+  ('919990040001', 2, 'outbound', 'We do. Data Science runs Saturdays and Sundays, 10am to 1pm, for twelve weeks.', 46),
   ('919990040001', 3, 'inbound',  'Sounds good. What is the total fee?', 41),
   ('919990040001', 4, 'outbound', '₹18,000 for the full course, or ₹4,500 per module if you would rather take them one at a time.', 40),
   ('919990040001', 5, 'inbound',  'that is a lot in one go', 33),
-  ('919990040001', 6, 'outbound', 'It can be split into two instalments if that is easier — UPI, card or bank transfer, whichever suits you.', 32),
+  ('919990040001', 6, 'outbound', 'It can be split into two instalments if that is easier. UPI, card or bank transfer, whichever suits you.', 32),
   ('919990040001', 7, 'inbound',  'two instalments works. UPI is fine for me', 12),
   ('919990040001', 8, 'outbound', 'Noted. I have put you down for the batch beginning on the 6th, and someone from our team will send the payment details.', 3),
 
   -- A parent asking on somebody else's behalf, which is why `leads.name` exists at all.
   ('919990040002', 1, 'inbound',  'my daughter finished her BSc last year, would this course be useful for her?', 182),
-  ('919990040002', 2, 'outbound', 'It is a common starting point after a science degree — no coding background is needed, we teach Python from the first session.', 181),
+  ('919990040002', 2, 'outbound', 'It is a common starting point after a science degree. No coding background is needed, we teach Python from the first session.', 181),
   ('919990040002', 3, 'inbound',  'she has interviews going on, mornings are busy', 175),
   ('919990040002', 4, 'outbound', 'The weekday batch runs Monday to Thursday, 7pm to 9pm, which may suit her better.', 174),
   ('919990040002', 5, 'inbound',  'and the fee is the same?', 170),
-  ('919990040002', 6, 'outbound', 'Yes — ₹18,000 for the twelve weeks, or ₹4,500 a module.', 169),
+  ('919990040002', 6, 'outbound', 'Yes, ₹18,000 for the twelve weeks, or ₹4,500 a module.', 169),
   ('919990040002', 7, 'inbound',  'can she attend one class first', 96),
   ('919990040002', 8, 'outbound', 'She is welcome to sit in on the first session before deciding.', 95),
   ('919990040002', 9, 'inbound',  'ok I will speak to her and let you know', 63),
@@ -495,36 +495,36 @@ from (
   ('919990040003', 3, 'inbound',  'I wanted to know about the digital marketing course', 36),
   ('919990040003', 4, 'outbound', 'Eight weeks, weekends only, 2pm to 5pm. Fees are ₹12,000.', 35),
   ('919990040003', 5, 'inbound',  'is it practical or mostly theory', 30),
-  ('919990040003', 6, 'outbound', 'It is hands-on — you work on live campaigns through the course.', 29),
+  ('919990040003', 6, 'outbound', 'It is hands-on, you work on live campaigns through the course.', 29),
   ('919990040003', 7, 'inbound',  'can someone call me, I have a few more questions', 8),
-  ('919990040003', 8, 'outbound', 'Of course — someone from our team will call you shortly.', 7),
+  ('919990040003', 8, 'outbound', 'Of course, someone from our team will call you shortly.', 7),
 
   ('919990040004', 1, 'inbound',  'I enrolled for the batch on the 6th but I have to travel that week', 300),
-  ('919990040004', 2, 'outbound', 'That is alright — a transfer to the next batch is allowed up to the second session.', 299),
+  ('919990040004', 2, 'outbound', 'That is alright, a transfer to the next batch is allowed up to the second session.', 299),
   ('919990040004', 3, 'inbound',  'so I do not lose the fee?', 295),
   ('919990040004', 4, 'outbound', 'No, the fee moves with you. It is only a refund that is not possible once a batch has begun.', 294),
   ('919990040004', 5, 'inbound',  'ok please move me to the next one', 291),
-  ('919990040004', 6, 'outbound', 'Noted — I have passed this on, and someone from our team will confirm the new batch date.', 290),
+  ('919990040004', 6, 'outbound', 'Noted, I have passed this on, and someone from our team will confirm the new batch date.', 290),
 
   -- A no, handled well. Not every thread should end in a sale.
   ('919990040005', 1, 'inbound',  'Do you run the data science course online?', 150),
-  ('919990040005', 2, 'outbound', 'It runs in person at our Indiranagar centre — there is no online batch at the moment.', 149),
+  ('919990040005', 2, 'outbound', 'It runs in person at our Indiranagar centre. There is no online batch at the moment.', 149),
   ('919990040005', 3, 'inbound',  'I am in Mysuru so that is difficult', 145),
   ('919990040005', 4, 'outbound', 'Understood. I can note your number and let you know if an online batch opens.', 144),
   ('919990040005', 5, 'inbound',  'yes please do that', 140),
-  ('919990040005', 6, 'outbound', 'Done — nothing else is needed from you for now.', 139),
+  ('919990040005', 6, 'outbound', 'Done, nothing else is needed from you for now.', 139),
 
   ('919990040006', 1, 'inbound',  'spoken english class timings?', 210),
   ('919990040006', 2, 'outbound', 'Weekday mornings, 8am to 9am, for six weeks. Fees are ₹6,000.', 209),
   ('919990040006', 3, 'inbound',  'where exactly is the centre, I am coming from Domlur', 205),
-  ('919990040006', 4, 'outbound', 'Indiranagar, 100 Feet Road, above the HDFC branch — about fifteen minutes from Domlur.', 204),
+  ('919990040006', 4, 'outbound', 'Indiranagar, 100 Feet Road, above the HDFC branch, about fifteen minutes from Domlur.', 204),
   ('919990040006', 5, 'inbound',  'ok that works, when does it start', 200),
   ('919990040006', 6, 'outbound', 'A new batch opens most months. I have noted your interest and someone will confirm the next start date.', 199),
 
   -- The one where the assistant has to say no. Placement help is offered, a job is not
   -- promised and no salary is quoted — the sector output check would strip either.
   ('919990040007', 1, 'inbound',  'after this course will I get a job?', 120),
-  ('919990040007', 2, 'outbound', 'We help with placement — CV review and interview practice — but I would not want to promise you a job, and I cannot quote salary figures.', 119),
+  ('919990040007', 2, 'outbound', 'We help with placement, CV review and interview practice, but I would not want to promise you a job, and I cannot quote salary figures.', 119),
   ('919990040007', 3, 'inbound',  'ok fair enough. what kind of help exactly', 116),
   ('919990040007', 4, 'outbound', 'CV review, mock interviews, and introductions where we have them. The rest depends on how the interviews go.', 115),
   ('919990040007', 5, 'inbound',  'and the certificate?', 112),
@@ -535,11 +535,11 @@ from (
   -- The handover, mid-thread and visible: the assistant stops, a person picks it up and
   -- signs their name, and the last two replies cost nothing.
   ('919990040008', 1, 'inbound',  'I paid the first instalment yesterday but have not received a receipt', 95),
-  ('919990040008', 2, 'outbound', 'Let me look into that — one moment.', 94),
+  ('919990040008', 2, 'outbound', 'Let me look into that, one moment.', 94),
   ('919990040008', 3, 'inbound',  'sure', 90),
   ('919990040008', 4, 'outbound', 'I am bringing someone from our team in, they can check the payment properly.', 89),
   ('919990040008', 5, 'inbound',  'thank you', 60),
-  ('919990040008', 6, 'outbound', 'Hi, this is Ananya from the office. I can see your payment against the weekend batch — the receipt went to the wrong email, I am resending it now.', 22),
+  ('919990040008', 6, 'outbound', 'Hi, this is Ananya from the office. I can see your payment against the weekend batch. The receipt went to the wrong email, I am resending it now.', 22),
   ('919990040008', 7, 'inbound',  'oh perfect, thank you', 18),
   ('919990040008', 8, 'outbound', 'Sent. Anything else, just message here.', 14),
 
@@ -548,25 +548,25 @@ from (
   ('919990040009', 3, 'inbound',  'and if I miss a class?', 256),
   ('919990040009', 4, 'outbound', 'Sessions are not repeated, but the material is shared and you can ask in the next class. A certificate needs 80% attendance.', 255),
   ('919990040009', 5, 'inbound',  'fine. I will come on the 6th', 250),
-  ('919990040009', 6, 'outbound', 'Good — I have noted you for the batch beginning on the 6th.', 249),
+  ('919990040009', 6, 'outbound', 'Good, I have noted you for the batch beginning on the 6th.', 249),
 
   ('919990040010', 1, 'inbound',  'I want to cancel and get a refund', 45),
   ('919990040010', 2, 'outbound', 'I am sorry to hear that. Has your batch already begun?', 44),
   ('919990040010', 3, 'inbound',  'yes, two sessions so far', 43),
   ('919990040010', 4, 'outbound', 'Refunds are not possible once a batch has begun, though a transfer to the next batch is allowed up to the second session.', 42),
   ('919990040010', 5, 'inbound',  'that is not what I was told when I paid', 25),
-  ('919990040010', 6, 'outbound', 'I would rather not settle that over a message — let me bring someone from our team in.', 24),
+  ('919990040010', 6, 'outbound', 'I would rather not settle that over a message, let me bring someone from our team in.', 24),
   ('919990040010', 7, 'inbound',  'please do', 21),
   ('919990040010', 8, 'outbound', 'Someone will reply here shortly.', 20),
 
   -- Hinglish in, Hinglish out. `organizations.voice` at the foot of this file says to
   -- mirror the customer, and this is the thread that shows it doing so.
   ('919990040011', 1, 'inbound',  'bhai weekend batch me abhi seat hai kya', 70),
-  ('919990040011', 2, 'outbound', 'Haan, abhi chaar seat baaki hain — batch 6 tareekh se shuru ho raha hai.', 69),
+  ('919990040011', 2, 'outbound', 'Haan, abhi chaar seat baaki hain, batch 6 tareekh se shuru ho raha hai.', 69),
   ('919990040011', 3, 'inbound',  'fees kitni hai', 66),
   ('919990040011', 4, 'outbound', '₹18,000 poore course ka, ya ₹4,500 per module agar ek ek karke lena ho.', 65),
   ('919990040011', 5, 'inbound',  'ek baar dekhne aa sakta hoon?', 58),
-  ('919990040011', 6, 'outbound', 'Bilkul — pehli class attend karke decide kar sakte hain.', 57),
+  ('919990040011', 6, 'outbound', 'Bilkul, pehli class attend karke decide kar sakte hain.', 57),
   ('919990040011', 7, 'inbound',  'theek hai, main Saturday aa jaunga', 52),
   ('919990040011', 8, 'outbound', 'Badhiya. Saturday 10 baje, Indiranagar, 100 Feet Road, HDFC branch ke upar.', 51),
 
@@ -575,7 +575,7 @@ from (
   ('919990040012', 3, 'inbound',  'is aadhaar ok', 24),
   ('919990040012', 4, 'outbound', 'Aadhaar is fine.', 23),
   ('919990040012', 5, 'inbound',  'and can I pay by card at the centre', 18),
-  ('919990040012', 6, 'outbound', 'Yes — UPI, card or bank transfer, whichever is easiest.', 17),
+  ('919990040012', 6, 'outbound', 'Yes, UPI, card or bank transfer, whichever is easiest.', 17),
   ('919990040012', 7, 'inbound',  'perfect, see you on the 6th', 6),
   ('919990040012', 8, 'outbound', 'See you then. I have noted you for the weekend batch.', 5)
 ) as t(wa_id, seq, dir, body, mins) on t.wa_id = c.customer_wa_id
@@ -659,7 +659,7 @@ from conversations c
 cross join lateral (
   select
     (array[
-      'Data science course',      'Weekend batch — fees',   'Centre near Indiranagar',
+      'Data science course',      'Weekend batch fees',   'Centre near Indiranagar',
       'Instalment payment',       'Course for her daughter', 'Certificate',
       'Saturday batch timing',    'Online or in person',    'Refund policy',
       'Placement help',           'Weekday batch later',    'Batch size',
@@ -670,7 +670,7 @@ cross join lateral (
     ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as intent,
     (array[
       null, null, null, null, 'Next batch', null,
-      'Saturdays', null, null, null, 'Later — after a few weeks', null,
+      'Saturdays', null, null, null, 'Later, after a few weeks', null,
       null, null, null, 'As soon as one opens', 'Mornings', null,
       null, null, null, null, null, 'This week'
     ]::text[])[1 + (right(c.customer_wa_id, 4)::int % 24)] as timeframe,
@@ -703,11 +703,11 @@ select c.org_id, c.id, l.name, l.intent, l.timeframe, l.budget, l.notes,
        c.last_message_at, c.last_message_at
 from conversations c
 join (values
-  ('919990010001', null,     'Saturday batch — wants a seat held', 'Saturday',  null, 'Asked if seats are still open'),
+  ('919990010001', null,     'Saturday batch, wants a seat held', 'Saturday',  null, 'Asked if seats are still open'),
   ('919990010002', null,     'Asked to be called back tomorrow',   'Tomorrow',  null, null),
   ('919990010003', null,     'Wants to speak to a person',         null,        null, null),
   ('919990010008', 'Sanjay', 'Asked for their details to be deleted', null,     null, null),
-  ('919990030001', 'Harini', 'Data science — weekend batch',       'Batch starting on the 6th', '₹18,000 full course, or ₹4,500 a module', 'Works full time, no coding background. Seat held.')
+  ('919990030001', 'Harini', 'Data science, weekend batch',       'Batch starting on the 6th', '₹18,000 full course, or ₹4,500 a module', 'Works full time, no coding background. Seat held.')
 ) as l(wa_id, name, intent, timeframe, budget, notes) on l.wa_id = c.customer_wa_id;
 
 -- Who has already been called back. "To call" is only a worklist if rows leave it, and
@@ -733,17 +733,17 @@ select c.org_id, c.id, l.name, l.intent, l.timeframe, l.budget, l.notes,
        c.last_message_at, c.last_message_at
 from conversations c
 join (values
-  ('919990040001', 'Deepak',  'Data science — weekend batch',        'Batch starting on the 6th', 'Two instalments, by UPI', 'Balked at the full fee; instalments settled it'),
-  ('919990040002', 'Latha',   'Course for her daughter — weekday batch', 'After her daughter decides', null, 'Daughter finished a BSc last year, interviews ongoing. Sitting in on the first session.'),
-  ('919990040003', 'Arjun',   'Digital marketing — asked for a call', 'Today',                null, 'Wants to speak to someone before enrolling'),
+  ('919990040001', 'Deepak',  'Data science, weekend batch',        'Batch starting on the 6th', 'Two instalments, by UPI', 'Balked at the full fee; instalments settled it'),
+  ('919990040002', 'Latha',   'Course for her daughter, weekday batch', 'After her daughter decides', null, 'Daughter finished a BSc last year, interviews ongoing. Sitting in on the first session.'),
+  ('919990040003', 'Arjun',   'Digital marketing, asked for a call', 'Today',                null, 'Wants to speak to someone before enrolling'),
   ('919990040004', 'Nisha',   'Transfer to the next batch',          'Next batch',            null, 'Already enrolled; travelling the week of the 6th'),
-  ('919990040005', 'Farhan',  'Online-only option',                  'Whenever one opens',    null, 'In Mysuru — cannot attend in person'),
-  ('919990040006', 'Shruti',  'Spoken English — morning batch',      'Next batch',            null, 'Travelling from Domlur'),
+  ('919990040005', 'Farhan',  'Online-only option',                  'Whenever one opens',    null, 'In Mysuru, cannot attend in person'),
+  ('919990040006', 'Shruti',  'Spoken English, morning batch',      'Next batch',            null, 'Travelling from Domlur'),
   ('919990040007', 'Gopal',   'Placement help',                      'Undecided',             null, 'Asked whether a job is guaranteed. Told no, and stayed.'),
   ('919990040008', 'Ritu',    'Receipt for the first instalment',    null,   'First instalment paid', 'Receipt went to the wrong email; resent by the office'),
   ('919990040009', 'Praveen', 'Batch size and attendance',           'Batch starting on the 6th', null, null),
   ('919990040010', 'Anjali',  'Refund request',                      'Waiting on us',         null, 'Batch already begun. Says she was told something different when she paid.'),
-  ('919990040011', 'Manoj',   'Weekend batch — coming to sit in',    'This Saturday',         null, 'Writes in Hinglish'),
+  ('919990040011', 'Manoj',   'Weekend batch, coming to sit in',    'This Saturday',         null, 'Writes in Hinglish'),
   ('919990040012', 'Sneha',   'Enrolment documents',                 'Batch starting on the 6th', 'Paying by card at the centre', null)
 ) as l(wa_id, name, intent, timeframe, budget, notes) on l.wa_id = c.customer_wa_id;
 
@@ -802,11 +802,11 @@ delete from app.demo_kb_seed;
 insert into app.demo_kb_seed (title, raw)
 select d.title, d.raw
 from (values
-  ('Demo — courses and fees', $kb$
+  ('Demo: courses and fees', $kb$
 Data Science, 12 weeks. Weekend batch: Saturday and Sunday, 10am to 1pm. Weekday batch:
 Monday to Thursday, 7pm to 9pm. Fees ₹18,000 for the full course, or ₹4,500 per module
 taken one at a time. 10% off if the full amount is paid before the batch begins. No prior
-coding needed — Python is taught from the first session, and basic spreadsheets are
+coding needed. Python is taught from the first session, and basic spreadsheets are
 enough to start.
 
 Digital Marketing, 8 weeks. Weekends only, 2pm to 5pm. Fees ₹12,000.
@@ -816,7 +816,7 @@ Spoken English, 6 weeks. Weekday mornings, 8am to 9am. Fees ₹6,000.
 Fees may be paid in two instalments on request, by UPI, card or bank transfer. No refunds
 once a batch has begun; a transfer to the next batch is allowed up to the second session.
 $kb$),
-  ('Demo — timings, location and admissions', $kb$
+  ('Demo: timings, location and admissions', $kb$
 Centre: Indiranagar, 100 Feet Road, above the HDFC branch, Bengaluru 560038. Office hours
 9:30am to 7pm, Monday to Saturday. Closed Sunday except during class hours.
 
@@ -826,7 +826,7 @@ is capped at 20. Anyone may sit in on the first session before deciding to enrol
 To enrol: confirm the batch, pay the first instalment, and bring one photo ID to the
 first session. A certificate is issued on 80% attendance.
 
-Placement assistance is offered — CV review and interview practice. We do not guarantee a
+Placement assistance is offered, with CV review and interview practice. We do not guarantee a
 job and do not quote salary figures.
 $kb$)
 ) as d(title, raw);

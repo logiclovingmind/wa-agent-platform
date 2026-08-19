@@ -145,8 +145,7 @@
       /* Cover */
       .brand { display: flex; align-items: center; gap: 20px; margin-bottom: 72px; }
       .brand img.mark { width: 62px; height: 62px; }
-      .brand img.word { width: 330px; }
-      .dark .brand img.word { filter: invert(1); }
+      .dark .brand img { filter: invert(1); }
 
       .for {
         margin-top: 72px;
@@ -178,6 +177,93 @@
         line-height: 1.35;
       }
       .dark .fig-l { color: var(--dim-d); border-top-color: var(--line-d); }
+
+      /* Icons, drawn to the logo's own rules: flats, verticals and exact 45° chamfers and
+         nothing else, which is the same three `dashboard/src/components/icons.tsx` obeys.
+         A segment on an arbitrary angle looks foreign here even though nobody can say
+         why. Stroked rather than filled, so they sit beside the type instead of shouting
+         over it. */
+      .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+      .ico {
+        display: block;
+        width: 32px;
+        height: 32px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .ico.lg { width: 46px; height: 46px; stroke-width: 1.4; }
+      .ico.sm { width: 22px; height: 22px; stroke-width: 1.8; }
+
+      /* The one number on slide 02 that can be drawn honestly: 85 and the 15 it leaves.
+         The other two have no total to divide by, so they stay as type. */
+      .split {
+        display: flex;
+        height: 12px;
+        margin-top: 36px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--wash);
+      }
+      .split i.a { display: block; background: var(--ink); }
+      .split-l {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 11px;
+        font-size: 14.5px;
+        color: var(--dim);
+      }
+
+      /* The five beats between a message arriving and one reply leaving. */
+      .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 30px; }
+      .step { position: relative; border-top: 1px solid var(--line); padding-top: 20px; }
+      /* Larger than the icons elsewhere: this slide carries no screenshot, so the icons
+         are the only picture on it. */
+      .step .ico { width: 40px; height: 40px; stroke-width: 1.45; margin-bottom: 18px; }
+      .step h4 {
+        margin: 0 0 7px;
+        font-family: var(--display);
+        font-size: 17.5px;
+        font-weight: 700;
+        letter-spacing: -0.012em;
+      }
+      .step p { font-size: 14.5px; line-height: 1.36; color: var(--dim); }
+      /* A chevron in the gutter, built from two borders on a 45° turn rather than a glyph,
+         so it stays the same drawing as everything else on the slide. */
+      .step + .step::before {
+        content: "";
+        position: absolute;
+        left: -19px;
+        top: 51px;
+        width: 8px;
+        height: 8px;
+        border-top: 1.5px solid #c4c4ce;
+        border-right: 1.5px solid #c4c4ce;
+        transform: rotate(45deg);
+      }
+
+      /* An icon, a name, a line. Used wherever a slide would otherwise be a paragraph. */
+      .opts { display: grid; gap: 17px; }
+      /* Under a full-width screenshot rather than beside a cropped one, where a stacked
+         list would be one short line and three columns of white. */
+      .opts.row { grid-template-columns: repeat(3, 1fr); gap: 30px; }
+      .opt { display: flex; align-items: flex-start; gap: 14px; }
+      .opt .ico { flex: none; margin-top: 1px; }
+      .opt b {
+        display: block;
+        font-family: var(--display);
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .opt span { font-size: 15px; line-height: 1.36; color: var(--dim); }
+      .dark .opt span { color: var(--dim-d); }
+
+      .figures .ico,
+      .claim .ico,
+      .duo .ico { margin-bottom: 15px; }
 
       /* Screens. The frame is what keeps a screenshot from reading as a stray image. */
       .shot,
@@ -223,66 +309,6 @@
       }
       .claim p { font-size: 16.5px; color: var(--dim); }
 
-      /* Pricing */
-      .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-      .plan {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 26px 24px 28px;
-      }
-      .plan .what { font-size: 16px; color: var(--dim); }
-      .plan .amt {
-        margin-top: 12px;
-        font-family: var(--display);
-        font-size: clamp(34px, 4.2vw, 48px);
-        font-weight: 700;
-        letter-spacing: -0.032em;
-        line-height: 1;
-        font-variant-numeric: tabular-nums;
-      }
-      .plan .amt small { font-size: 0.58em; font-weight: 500; letter-spacing: 0; margin-right: 3px; }
-      .plan .per { margin-top: 10px; font-size: 15.5px; color: var(--dim); }
-      .ladder { margin-top: 12px; }
-      .ladder div {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 16px;
-        padding: 8px 0;
-        border-top: 1px solid var(--line-d);
-        font-size: 16px;
-      }
-      .ladder div:first-child { border-top: none; padding-top: 2px; }
-      .ladder b {
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 22px;
-        letter-spacing: -0.02em;
-        font-variant-numeric: tabular-nums;
-      }
-      .plan .resell {
-        margin-top: 18px;
-        padding-top: 16px;
-        border-top: 1px solid var(--line);
-        font-size: 15.5px;
-      }
-      .plan .resell b { font-weight: 700; }
-      .plan.hero { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-      .plan.hero .what, .plan.hero .per { color: var(--dim-d); }
-      .plan.hero .resell { border-top-color: var(--line-d); }
-
-      .terms {
-        margin-top: 26px;
-        padding-top: 20px;
-        border-top: 1px solid var(--line);
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 20px 30px;
-        font-size: 15px;
-        color: var(--dim);
-      }
-      .terms b { color: var(--ink); font-weight: 600; }
-
       /* Split */
       .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; }
       .duo h3 {
@@ -295,17 +321,18 @@
       .duo p { font-size: 16.5px; color: var(--dim); }
       .dark .duo > div { border-top: 1px solid var(--line-d); padding-top: 18px; }
 
-      .foot {
-        margin-top: 52px;
-        padding-top: 22px;
+      .signoff {
+        margin-top: 68px;
+        padding-top: 26px;
         border-top: 1px solid var(--line-d);
         display: flex;
-        align-items: center;
-        gap: 14px;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 24px;
         font-size: 17px;
       }
-      .foot img { width: 30px; height: 30px; }
-      .foot a { color: var(--paper); }
+      .signoff img.word { width: 300px; filter: invert(1); align-self: center; }
+      .signoff a { color: var(--paper); }
 
       /* Screen only. Chrome evaluates print at roughly 793px, so an unscoped max-width
          query collapses every grid in the PDF to a single column. */
@@ -316,14 +343,23 @@
         h2 { margin-bottom: 22px; }
         .brand { margin-bottom: 40px; gap: 13px; }
         .brand img.mark { width: 46px; height: 46px; }
-        .brand img.word { width: 210px; }
         .for { margin-top: 38px; gap: 6px 26px; font-size: 15px; }
         .figures { grid-template-columns: 1fr; gap: 24px; }
-        .zoom, .claims, .duo, .plans, .terms { grid-template-columns: 1fr; gap: 22px; }
+        .zoom, .claims, .duo, .flow, .opts.row { grid-template-columns: 1fr; gap: 22px; }
+        /* The chevrons point along a row that no longer exists. */
+        .step + .step::before { display: none; }
+        .ico { width: 28px; height: 28px; }
+        .ico.lg { width: 36px; height: 36px; }
         .zoom { gap: 20px; }
         .stack > .crop { margin-bottom: 20px; }
         .callout { font-size: 17px; }
-        .foot { margin-top: 36px; }
+        .signoff {
+          margin-top: 40px;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 16px;
+        }
+        .signoff img.word { width: 200px; align-self: flex-start; }
       }
 
       @media print {
@@ -344,8 +380,8 @@
         }
         .slide:last-child { break-after: auto; }
         .slide.dark,
-        .plan.hero,
-        .rule, .rule.red, .rule.green, .rule.amber {
+        .rule, .rule.red, .rule.green, .rule.amber,
+        .split, .split i.a {
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
         }
@@ -354,7 +390,14 @@
         h2 { font-size: 29pt; margin-bottom: 8mm; }
         .big { font-size: 15pt; }
         .fig-n { font-size: 52pt; }
-        .plan .amt { font-size: 29pt; }
+        /* In millimetres, because everything an icon sits beside is set in points and an
+           icon left in pixels lands at a different size on paper than it does on screen. */
+        .ico { width: 9mm; height: 9mm; }
+        .ico.lg { width: 13mm; height: 13mm; }
+        .ico.sm { width: 6mm; height: 6mm; }
+        .flow { gap: 9mm; }
+        .step .ico { width: 12mm; height: 12mm; }
+        .step + .step::before { left: -6mm; top: 17mm; }
         /* Height-capped with the width left to follow, rather than object-fit: contain.
            Contain letterboxes inside a full-width box, so the border ends up drawn
            around a band of empty paper instead of around the screenshot. */
@@ -372,21 +415,117 @@
   </head>
 
   <body>
+    <!-- Every glyph the deck uses, once. Defined as symbols rather than repeated inline
+         so a shape can be corrected in one place, and because the same icon appears on
+         three different slides at three different sizes.
+
+         Flats, verticals and 45° only. See the note beside `.ico` above. -->
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <defs>
+        <!-- A reply that wrote itself: the bubble with a bolt inside it. -->
+        <symbol id="i-auto" viewBox="0 0 24 24">
+          <path d="M3 6 L6 3 H18 L21 6 V13 L18 16 H10 L6 20 V16 H3 Z" />
+          <path d="M14 6.5 L10 11 H12.5 L11 15 L15 10.5 H12.5 Z" />
+        </symbol>
+        <!-- After closing. A crescent, chamfered rather than curved. -->
+        <symbol id="i-moon" viewBox="0 0 24 24">
+          <path d="M13 3 L18 8 V15 L13 20 L8.5 15.5 V7.5 Z" />
+          <path d="M13 3 L9 7 V16 L13 20" />
+        </symbol>
+        <!-- How long the customer waited. -->
+        <symbol id="i-clock" viewBox="0 0 24 24">
+          <path d="M8 3 H16 L21 8 V16 L16 21 H8 L3 16 V8 Z" />
+          <path d="M12 7.5 V12 H15.5" />
+        </symbol>
+        <!-- The number itself. -->
+        <symbol id="i-phone" viewBox="0 0 24 24">
+          <path d="M7 3 H17 V21 H7 Z" />
+          <path d="M7 6 H17 M7 18 H17 M11 19.5 H13" />
+        </symbol>
+        <!-- Its voice: the business's own words, not ours. -->
+        <symbol id="i-tone" viewBox="0 0 24 24">
+          <path d="M4 10 V14 M8 6 V18 M12 8.5 V15.5 M16 4.5 V19.5 M20 10 V14" />
+        </symbol>
+        <!-- The check that runs before anything is sent. -->
+        <symbol id="i-shield" viewBox="0 0 24 24">
+          <path d="M12 3 L20 6 V12 L12 21 L4 12 V6 Z" />
+          <path d="M8.5 11.5 L11 14 L15.5 9.5" />
+        </symbol>
+        <!-- The owner stepping in. -->
+        <symbol id="i-pause" viewBox="0 0 24 24">
+          <path d="M8 3 H16 L21 8 V16 L16 21 H8 L3 16 V8 Z" />
+          <path d="M10 9 V15 M14 9 V15" />
+        </symbol>
+        <!-- And stepping back out. -->
+        <symbol id="i-swap" viewBox="0 0 24 24">
+          <path d="M20 8 H7 M11 4 L7 8 L11 12" />
+          <path d="M4 16 H17 M13 12 L17 16 L13 20" />
+        </symbol>
+        <!-- Bookings. The dots are zero-length paths under a round cap. -->
+        <symbol id="i-calendar" viewBox="0 0 24 24">
+          <path d="M4 6 H20 V20 H4 Z M4 10 H20 M8 3.5 V6 M16 3.5 V6" />
+          <path d="M8 14 H8.01 M12 14 H12.01 M16 14 H16.01 M8 17 H8.01 M12 17 H12.01" />
+        </symbol>
+        <!-- The week's shape, the same rising trace the dashboard's own Flowin icon uses. -->
+        <symbol id="i-chart" viewBox="0 0 24 24">
+          <path d="M3.5 20.5 H20.5" />
+          <path d="M7 15 V20.5 M12 9 V20.5 M17 12.5 V20.5" />
+        </symbol>
+        <!-- A conversation, both sides of it. -->
+        <symbol id="i-thread" viewBox="0 0 24 24">
+          <path d="M3 4 H14 V11 H7 L4 14 V11 H3 Z" />
+          <path d="M10 13 H21 V20 H14 L11 23 V20 H10 Z" />
+        </symbol>
+        <!-- Everything held about a customer, handed back to them. -->
+        <symbol id="i-export" viewBox="0 0 24 24">
+          <path d="M12 3.5 V14" />
+          <path d="M8 10 L12 14 L16 10" />
+          <path d="M4 17 V20.5 H20 V17" />
+        </symbol>
+        <!-- Gone, not hidden. -->
+        <symbol id="i-erase" viewBox="0 0 24 24">
+          <path d="M4.5 7 H19.5 M8 7 V4 H16 V7" />
+          <path d="M6.5 7 V20.5 H17.5 V7" />
+          <path d="M10 11 V16.5 M14 11 V16.5" />
+        </symbol>
+        <!-- The same answers for every business, which is why there is no bespoke build. -->
+        <symbol id="i-copy" viewBox="0 0 24 24">
+          <path d="M9 3 H17 L21 7 V15 H9 Z" />
+          <path d="M15 15 V21 H3 V9 H9" />
+        </symbol>
+        <!-- Held apart, and not for long. -->
+        <symbol id="i-lock" viewBox="0 0 24 24">
+          <path d="M5.5 11 H18.5 V20.5 H5.5 Z" />
+          <path d="M9 11 V8 L12 5 L15 8 V11" />
+          <path d="M12 14.5 V17" />
+        </symbol>
+        <!-- A person, brought in. -->
+        <symbol id="i-person" viewBox="0 0 24 24">
+          <path d="M12 3.5 L15 6.5 V9 L12 12 L9 9 V6.5 Z" />
+          <path d="M4 20.5 V18 L8 14 H16 L20 18 V20.5" />
+        </symbol>
+        <!-- Opening hours, handed over. -->
+        <symbol id="i-hours" viewBox="0 0 24 24">
+          <path d="M3.5 4 H20.5 V20 H3.5 Z" />
+          <path d="M3.5 8 H20.5 M8 12 H16 M8 16 H13" />
+        </symbol>
+      </defs>
+    </svg>
+
     <!-- 01. Cover -->
     <section class="slide dark">
       <div class="brand">
-        <img class="mark" src="logo-gradient.svg" alt="" />
-        <img class="word" src="../wordmark.svg" alt="Logic Loving Mind" />
+        <img class="mark" src="../logo.svg" alt="Logic Loving Mind" />
       </div>
 
-      <h1>Your client's<br />WhatsApp, answered.</h1>
+      <h1>Your WhatsApp,<br />answered.</h1>
       <p class="big dim" style="margin-top: 28px; max-width: 33ch">
         It replies day and night, it sounds like the business, it books the appointment,
         and it knows when to fetch a real person.
       </p>
 
       <div class="for">
-        <span class="dim">Prepared for <b>First Step Digital Agency</b></span>
+        <span class="dim">Logic Loving Mind</span>
         <span class="dim">August 2026</span>
         <span class="dim">hey@logiclovingmind.com</span>
       </div>
@@ -399,238 +538,263 @@
       <h2>What it did while<br />nobody was watching.</h2>
       <div class="figures">
         <div>
+          <svg class="ico"><use href="#i-auto" /></svg>
           <div class="fig-n">85<span style="font-size: 0.48em">%</span></div>
-          <div class="fig-l">of replies went out without anyone on the team lifting a finger</div>
+          <div class="fig-l">of replies went out without anyone lifting a finger</div>
         </div>
         <div>
-          <div class="fig-n">421</div>
-          <div class="fig-l">questions answered after the business had closed for the day</div>
+          <svg class="ico"><use href="#i-moon" /></svg>
+          <div class="fig-n">500</div>
+          <div class="fig-l">questions answered after the business had closed</div>
         </div>
         <div>
-          <div class="fig-n">8<span style="font-size: 0.48em">s</span></div>
-          <div class="fig-l">is how long a customer waited for a real answer, not a holding message</div>
+          <svg class="ico"><use href="#i-clock" /></svg>
+          <div class="fig-n">7<span style="font-size: 0.48em">s</span></div>
+          <div class="fig-l">is how long a customer waited for a real answer</div>
         </div>
       </div>
-      <p class="dim" style="margin-top: 34px; font-size: 15.5px">
+
+      <div class="split"><i class="a" style="width: 85%"></i></div>
+      <div class="split-l">
+        <span>Answered by itself</span>
+        <span>Went to a person</span>
+      </div>
+
+      <p class="dim" style="margin-top: 26px; font-size: 15.5px">
         Real numbers from the demo you can log into. Nothing here is an estimate.
       </p>
     </section>
 
-    <!-- 03. Desk -->
+    <!-- 03. How it works -->
     <section class="slide">
       <span class="n">03</span>
+      <span class="tag">What happens in those seven seconds</span>
+      <h2>Message in, one answer out.</h2>
+      <div class="flow">
+        <div class="step">
+          <svg class="ico"><use href="#i-phone" /></svg>
+          <h4>It arrives</h4>
+          <p>On the business's own WhatsApp number.</p>
+        </div>
+        <div class="step">
+          <svg class="ico"><use href="#i-clock" /></svg>
+          <h4>It waits</h4>
+          <p>Four seconds, so three quick messages are one question.</p>
+        </div>
+        <div class="step">
+          <svg class="ico"><use href="#i-tone" /></svg>
+          <h4>It reads the business</h4>
+          <p>Services, prices, hours, the way they speak.</p>
+        </div>
+        <div class="step">
+          <svg class="ico"><use href="#i-shield" /></svg>
+          <h4>It checks itself</h4>
+          <p>Anything it should not answer stops here.</p>
+        </div>
+        <div class="step">
+          <svg class="ico"><use href="#i-auto" /></svg>
+          <h4>One reply</h4>
+          <p>Never two, and never a holding message.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04. Desk -->
+    <section class="slide">
+      <span class="n">04</span>
       <span class="tag">Screen one</span>
       <h2>Desk. <span class="soft">Every chat, as it happens.</span></h2>
       <img class="shot" src="shots/desk.png" alt="The Desk screen" />
     </section>
 
-    <!-- 04. Safety flags -->
+    <!-- 05. Safety flags -->
     <section class="slide">
-      <span class="n">04</span>
+      <span class="n">05</span>
       <span class="tag">Screen one, up close</span>
       <h2>It stopped itself,<br />twice, in one day.</h2>
       <div class="zoom">
         <img class="crop" src="shots/desk-flags.png" alt="Two conversations flagged for a human" />
         <div class="callout">
           <div class="rule red"></div>
-          <b>One customer turned out to be a child. Another was clearly upset.</b> The
-          assistant said nothing more to either of them and passed both straight to the
-          owner. This is your answer when a client asks what happens if it says the wrong
-          thing.
+          <b>A child. Somebody upset.</b> It said nothing more to either of them and put
+          both in front of the owner.
         </div>
       </div>
     </section>
 
-    <!-- 05. Takeover -->
+    <!-- 06. Takeover -->
     <section class="slide">
-      <span class="n">05</span>
+      <span class="n">06</span>
       <span class="tag">Screen one, the control</span>
       <h2>The owner is always in charge.</h2>
       <div class="stack">
         <img class="crop" src="shots/desk-pause.png" alt="Pausing the assistant from the Desk" />
-        <div class="callout">
-          <div class="rule"></div>
-          <b>One tap and the owner takes over.</b> The assistant steps back, either for that
-          one customer or for the whole business, and everything that comes in sits and
-          waits until the owner replies. Names and numbers download as a spreadsheet.
+        <div class="opts row">
+          <div class="opt">
+            <svg class="ico"><use href="#i-pause" /></svg>
+            <div><b>Pause it</b><span>For one customer, or for the whole business.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico"><use href="#i-person" /></svg>
+            <div><b>Everything waits</b><span>Nothing goes out until the owner replies.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico"><use href="#i-export" /></svg>
+            <div><b>Take the list</b><span>Names and numbers, as a spreadsheet.</span></div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- 06. Diary -->
-    <section class="slide">
-      <span class="n">06</span>
-      <span class="tag">Screen two</span>
-      <h2>Diary. <span class="soft">It books, they turn up.</span></h2>
-      <div class="stack">
-        <img class="crop" src="shots/diary-today.png" alt="Today's bookings" />
-        <div class="callout">
-          <div class="rule green"></div>
-          <b>Appointments the assistant made, on a day view anyone at the front desk can
-          read.</b> Block off time, move a booking, tick who arrived. If somebody does not
-          turn up, it comes back as a job to chase rather than being forgotten.
-        </div>
-      </div>
-    </section>
-
-    <!-- 07. Flowin -->
+    <!-- 07. A conversation, whole -->
     <section class="slide">
       <span class="n">07</span>
-      <span class="tag">Screen three</span>
-      <h2>Flowin. <span class="soft">Proof it was worth paying for.</span></h2>
-      <div class="stack">
-        <img class="crop" src="shots/flowin-headline.png" alt="Coverage and volume" />
-        <div class="callout">
-          <div class="rule amber"></div>
-          <b>This is the screen your client opens when they are deciding whether to keep
-          paying you.</b> It answers that in one number and one sentence. There is no chart
-          to work out.
-        </div>
-      </div>
+      <span class="tag">Screen one, inside a conversation</span>
+      <h2>Chat. <span class="soft">Start to finish, unedited.</span></h2>
+      <img class="shot" src="shots/thread.png" alt="A whole conversation, question by question" />
     </section>
 
-    <!-- 08. Why -->
+    <!-- 08. The controls on a conversation -->
     <section class="slide">
       <span class="n">08</span>
-      <span class="tag">Next to what they have already been sold</span>
-      <h2>Four things that<br />win the deal.</h2>
-      <div class="claims">
-        <div class="claim">
-          <h3>It replies on its own.</h3>
-          <p>
-            Most WhatsApp tools are just a shared inbox. Somebody still has to sit there and
-            type. That person's salary was always the real cost.
-          </p>
-        </div>
-        <div class="claim">
-          <h3>It sounds like the business.</h3>
-          <p>
-            Its services, its prices, its way of speaking. A clinic sounds like a clinic, a
-            salon sounds like a salon. Change it by writing a normal sentence and the very
-            next reply follows.
-          </p>
-        </div>
-        <div class="claim">
-          <h3>It runs on WhatsApp's own service.</h3>
-          <p>
-            The client's real number, verified and set up the way WhatsApp intends. Not an
-            old handset in a drawer that gets blocked three months in.
-          </p>
-        </div>
-        <div class="claim">
-          <h3>Your twentieth client costs what your second did.</h3>
-          <p>
-            Nothing new to buy or set up at our end when you add one. That is where your
-            profit comes from.
-          </p>
+      <span class="tag">Screen one, the menu</span>
+      <h2>Four things the owner<br />can do to any chat.</h2>
+      <div class="zoom">
+        <img class="crop" src="shots/thread-options.png" alt="The options on an open conversation" />
+        <div class="opts">
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-pause" /></svg>
+            <div><b>Take it over</b><span>The assistant stops mid-conversation.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-swap" /></svg>
+            <div><b>Hand it back</b><span>It picks up where the owner left off.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-export" /></svg>
+            <div><b>Export everything held</b><span>Readable first, then handed to the customer.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico sm"><use href="#i-erase" /></svg>
+            <div><b>Erase permanently</b><span>Gone from the system, not hidden in it.</span></div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- 09. Safety -->
-    <section class="slide dark">
+    <!-- 09. Diary -->
+    <section class="slide">
       <span class="n">09</span>
+      <span class="tag">Screen two</span>
+      <h2>Diary. <span class="soft">It books, they turn up.</span></h2>
+      <div class="zoom">
+        <img class="crop" src="shots/diary-today.png" alt="Today's bookings" />
+        <div class="opts">
+          <div class="opt">
+            <svg class="ico"><use href="#i-calendar" /></svg>
+            <div><b>Booked by the assistant</b><span>On a day anyone at the desk can read.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico"><use href="#i-pause" /></svg>
+            <div><b>Block, move, tick off</b><span>The front desk still runs the day.</span></div>
+          </div>
+          <div class="opt">
+            <svg class="ico"><use href="#i-swap" /></svg>
+            <div><b>A no-show comes back</b><span>As a job to chase, not as a gap.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. Flowin -->
+    <section class="slide">
+      <span class="n">10</span>
+      <span class="tag">Screen three</span>
+      <h2>Flowin. <span class="soft">Proof it was worth it.</span></h2>
+      <div class="stack">
+        <img class="crop" src="shots/flowin.png" alt="The Flowin screen" />
+        <div class="callout">
+          <div class="rule amber"></div>
+          <b>One number and one sentence.</b> The owner reads it whenever they like,
+          without asking anybody for a report.
+        </div>
+      </div>
+    </section>
+
+    <!-- 11. Why -->
+    <section class="slide">
+      <span class="n">11</span>
+      <span class="tag">Next to everything else on the market</span>
+      <h2>Four things that<br />make the difference.</h2>
+      <div class="claims">
+        <div class="claim">
+          <svg class="ico"><use href="#i-auto" /></svg>
+          <h3>It replies on its own.</h3>
+          <p>Everything else is a shared inbox. Somebody still has to sit there and type.</p>
+        </div>
+        <div class="claim">
+          <svg class="ico"><use href="#i-tone" /></svg>
+          <h3>It sounds like the business.</h3>
+          <p>Its services, its prices, its way of speaking. A clinic is not a salon.</p>
+        </div>
+        <div class="claim">
+          <svg class="ico"><use href="#i-phone" /></svg>
+          <h3>It is WhatsApp's own service.</h3>
+          <p>The real number, verified. Not a handset in a drawer that gets blocked.</p>
+        </div>
+        <div class="claim">
+          <svg class="ico"><use href="#i-copy" /></svg>
+          <h3>Nothing about it is bespoke.</h3>
+          <p>New answers, not new software. Live in days, and it does not drift.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12. Safety -->
+    <section class="slide dark">
+      <span class="n">12</span>
       <span class="tag">The part nobody else will show you</span>
       <h2>When it should not<br />answer, it does not.</h2>
       <div class="duo">
         <div>
+          <svg class="ico lg"><use href="#i-shield" /></svg>
           <h3>It stops. It does not guess.</h3>
           <p class="dim">
-            If somebody is upset, talks about hurting themselves, or turns abusive, the
-            assistant stops writing and a person is brought in at once. If the customer
-            seems to be a child, it stops for good. It never leaves anybody sitting in
-            silence.
+            Upset, at risk, abusive, or a child: it stops writing and a person is brought in
+            at once. Nobody is ever left sitting in silence.
           </p>
         </div>
         <div>
+          <svg class="ico lg"><use href="#i-lock" /></svg>
           <h3>Built for India's data law.</h3>
           <p class="dim">
-            Any customer's details can be sent to them or wiped on request. Nothing is kept
-            longer than a year. Every business's data is held apart from every other one.
-            The agreement your clients will ask for is written and ready to sign.
+            Sent or wiped on request. Nothing kept past a year. Every business held apart
+            from every other one, and the agreement is written.
           </p>
         </div>
       </div>
     </section>
 
-    <!-- 10. Money -->
-    <section class="slide">
-      <span class="n">10</span>
-      <span class="tag">Your price, per client, in rupees</span>
-      <h2>What you pay us.</h2>
-      <div class="plans">
-        <div class="plan">
-          <div class="what">Setting a client up, once</div>
-          <div class="amt"><small>₹</small>15,000</div>
-          <div class="per">The number, the paperwork, what it knows, how it talks, going live</div>
-          <div class="resell">You sell at <b>₹30,000 to 40,000</b></div>
-        </div>
-        <div class="plan hero">
-          <div class="what">Platform, support and upkeep</div>
-          <div class="ladder">
-            <div><span>1 to 2 clients</span><b>₹36,000</b></div>
-            <div><span>3 to 5 clients</span><b>₹30,000</b></div>
-            <div><span>6 or more</span><b>₹24,000</b></div>
-          </div>
-          <div class="per">Per client, per year. The more you run, the less each one costs.</div>
-          <div class="resell">You sell at <b>₹6,000 to 8,000</b> a month</div>
-        </div>
-        <div class="plan">
-          <div class="what">Replies included</div>
-          <div class="amt">10,000</div>
-          <div class="per">Per client, per year. Buy more in blocks of 5,000.</div>
-          <div class="resell">Enough for a busy clinic, salon or institute</div>
-        </div>
-      </div>
-      <div class="terms">
-        <div>
-          <b>Your price drops as you grow.</b> Sign a sixth client and the first five move to
-          the cheaper rate when they next renew. Nothing to renegotiate.
-        </div>
-        <div>
-          <b>Paid a year or three months ahead.</b> A year is charged as ten months. Extra
-          blocks of replies are priced when you buy them, and that price holds for the rest
-          of the term.
-        </div>
-        <div>
-          <b>WhatsApp's own message charges are passed to you at cost</b>, listed
-          separately. WhatsApp begins charging for these chats on 1 October 2026. GST on
-          top.
-        </div>
-      </div>
-    </section>
-
-    <!-- 11. Close -->
+    <!-- 13. Close -->
     <section class="slide dark">
-      <span class="n">11</span>
-      <span class="tag">How this works</span>
-      <h2>You own the client.<br />We run everything behind it.</h2>
-      <div class="duo">
+      <span class="n">13</span>
+      <span class="tag">Seeing it for yourself</span>
+      <h2>Send us two things.</h2>
+      <div class="duo" style="margin-top: 34px">
         <div>
-          <h3>First Step Digital Agency</h3>
-          <p class="dim">
-            Finds the client, sets the price, sends the bill, and collects their list of
-            services and opening hours.
-          </p>
+          <svg class="ico lg"><use href="#i-tone" /></svg>
+          <h3>What you sell</h3>
+          <p class="dim">Services and prices, however you already have them written.</p>
         </div>
         <div>
-          <h3>Logic Loving Mind</h3>
-          <p class="dim">
-            Sets up the number, runs the platform, and keeps it safe, backed up and online.
-            We never contact your clients.
-          </p>
+          <svg class="ico lg"><use href="#i-hours" /></svg>
+          <h3>When you are open</h3>
+          <p class="dim">That is the whole brief. It answers as your business on a real number, and you can try to catch it out.</p>
         </div>
       </div>
-      <p class="big" style="margin-top: 40px">
-        Send us one client's price list. We will have the assistant answering as them, on a
-        real number, in about ten minutes.
-      </p>
-      <div class="foot">
-        <img src="logo-gradient.svg" alt="" />
-        <span>
-          Logic Loving Mind &nbsp;·&nbsp;
-          <a href="mailto:hey@logiclovingmind.com">hey@logiclovingmind.com</a>
-        </span>
+      <div class="signoff">
+        <img class="word" src="../wordmark.svg" alt="Logic Loving Mind" />
+        <a href="mailto:hey@logiclovingmind.com">hey@logiclovingmind.com</a>
       </div>
     </section>
   </body>
