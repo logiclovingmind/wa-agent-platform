@@ -1,7 +1,8 @@
 # CLAUDE.md
 
 Multi-tenant WhatsApp AI agent platform. One codebase, many clients. TypeScript
-strict, pnpm. **Greenfield — no code exists yet.** Build in the order in §3.
+strict, pnpm. **In production.** Extend what is there rather than rebuilding; §3 records
+the original build order.
 
 Flow: Meta webhook → verify signature → identify client → debounce ~4s → build prompt
 → LLM → exactly one reply. Owner can take over from the dashboard.

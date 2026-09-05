@@ -29,7 +29,7 @@ backed by SQLite, owns the problems that are genuinely stateful:
 - WhatsApp's 24-hour reply window, and an alarm that returns the thread to the bot when
   a handoff goes stale
 
-**Postgres on Supabase** holds durable data: 12 tables, row-level security enforced on
+**Postgres on Supabase** holds durable data: 17 tables, row-level security enforced on
 every one of them, 45 forward-only migrations under an expand-contract discipline so a
 deploy never requires a destructive schema change.
 
@@ -45,7 +45,7 @@ Flagged content is scrubbed on a retention schedule.
 
 ## Operations
 
-- Five cron triggers: usage accounting and heartbeat, retention deletion and flagged
+- Three cron triggers: usage accounting and heartbeat, retention deletion and flagged
   content scrub, and an inbound dedupe sweep
 - Per-organisation rate limiting
 - Nightly backups via GitHub Actions
